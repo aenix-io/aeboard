@@ -7,8 +7,8 @@ package ghcli
 
 import (
 	"bytes"
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
