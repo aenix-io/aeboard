@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/reearth/ygo/provider/websocket"
@@ -26,13 +27,18 @@ type Server struct {
 	spa   fs.FS
 	log   *slog.Logger
 
-	identity IdentityFunc
+	identity      IdentityFunc
+	backendStatus BackendStatus
+	editors       editors
+
+	statusMu   sync.Mutex
+	statusSubs map[chan struct{}]struct{}
 }
 
 // New returns a server over store and its attachments, serving the SPA from spa.
 func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logger) *Server {
-	s := &Server{store: store, blobs: blobStore, spa: spa, log: log}
-	s.sync = websocket.NewServerWithPersistence(persistence{store: store, log: log})
+	s := &Server{store: store, blobs: blobStore, spa: spa, log: log, statusSubs: map[chan struct{}]struct{}{}}
+	s.sync = websocket.NewServerWithPersistence(persistence{s: s})
 	s.sync.Logger = log
 	// A room is a board: refuse the upgrade for an id that names none, so a
 	// typo in a URL never conjures an empty board out of thin air.
@@ -41,9 +47,29 @@ func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logge
 		if !boards.ValidID(id) {
 			return websocket.ConnectionConfig{}, false
 		}
-		_, err := store.Get(id)
-		return websocket.ConnectionConfig{}, err == nil
+		if _, err := store.Get(id); err != nil {
+			return websocket.ConnectionConfig{}, false
+		}
+		if s.identity != nil {
+			if who, ok := s.identity(r); ok {
+				s.editors.join(id, who.Login)
+			}
+		}
+		return websocket.ConnectionConfig{}, true
 	}
+	// The last participant left and ygo has flushed the room's pending
+	// updates: write the board now rather than at the next quiet tick.
+	s.sync.OnUnloadDocument = func(_ context.Context, room string) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			if err := store.Flush(ctx, room); err != nil {
+				s.log.Error("flush board on unload", "board", room, "err", err)
+			}
+			s.editors.clear(room)
+		}()
+	}
+	store.Subscribe(s.NotifyStatus)
 	return s
 }
 
@@ -51,6 +77,8 @@ func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logge
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/me", s.me)
+	mux.HandleFunc("GET /api/v1/status", s.getStatus)
+	mux.HandleFunc("GET /api/v1/status/events", s.statusEvents)
 	mux.HandleFunc("GET /api/v1/boards", s.listBoards)
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)
@@ -88,7 +116,7 @@ func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Create(in.Title, in.Tags)
+	m, err := s.store.Create(in.Title, in.Tags, s.login(r))
 	if err != nil {
 		s.log.Error("create board", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create the board")
@@ -112,7 +140,7 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Update(r.PathValue("id"), p)
+	m, err := s.store.Update(r.PathValue("id"), p, s.login(r))
 	if err != nil {
 		writeStoreError(w, err)
 		return
@@ -167,6 +195,15 @@ func (s *Server) putBlob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// login is the request's actor for commit attribution ("" when anonymous).
+func (s *Server) login(r *http.Request) string {
+	if s.identity == nil {
+		return ""
+	}
+	id, _ := s.identity(r)
+	return id.Login
+}
+
 func writeStoreError(w http.ResponseWriter, err error) {
 	if errors.Is(err, boards.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "board not found")
@@ -208,23 +245,23 @@ func spaHandler(dist fs.FS) http.Handler {
 // persistence adapts the board store to ygo. ygo already coalesces a burst
 // of updates into one StoreUpdate per debounce window (2s, capped at 10s)
 // and flushes on room unload and on Shutdown.
-type persistence struct {
-	store *boards.Store
-	log   *slog.Logger
-}
+//
+// StoreUpdate only merges into the in-memory store; the store writes the
+// board behind (see boards.Store.RunFlusher).
+type persistence struct{ s *Server }
 
 func (p persistence) LoadDoc(room string) ([]byte, error) {
-	return p.store.LoadState(room)
+	return p.s.store.LoadState(room)
 }
 
 func (p persistence) StoreUpdate(room string, update []byte) error {
-	changed, err := p.store.ApplyUpdate(room, update)
+	changed, err := p.s.store.ApplyUpdate(room, update, p.s.editors.of(room)...)
 	if err != nil {
-		p.log.Error("store update", "board", room, "err", err)
+		p.s.log.Error("store update", "board", room, "err", err)
 		return err
 	}
 	if changed {
-		p.log.Debug("stored update", "board", room, "bytes", len(update))
+		p.s.log.Debug("stored update", "board", room, "bytes", len(update))
 	}
 	return nil
 }

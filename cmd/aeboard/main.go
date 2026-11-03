@@ -78,7 +78,10 @@ func runServe(args []string) error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	store, err := boards.Open(*data)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	store, err := boards.Open(ctx, boards.DirBackend{Root: *data})
 	if err != nil {
 		return fmt.Errorf("open board store: %w", err)
 	}
@@ -111,8 +114,17 @@ func runServe(args []string) error {
 	}
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	flushCtx, stopFlusher := context.WithCancel(context.Background())
+	defer stopFlusher()
+	flusherDone := make(chan struct{})
+	go func() {
+		defer close(flusherDone)
+		store.RunFlusher(flushCtx, boards.DefaultFlushPolicy, 30*time.Second, func(err error) {
+			log.Error("write boards", "err", err)
+			srv.NotifyStatus()
+		})
+	}()
+
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", "http://"+*addr, "data", *data, "version", version)
@@ -126,10 +138,13 @@ func runServe(args []string) error {
 	log.Info("shutting down")
 	sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	// Flush the rooms first (their pending coalesced updates), then stop HTTP.
+	// Rooms first (ygo flushes their coalesced updates into the store), then
+	// the store's final write to the backend, then HTTP.
 	if err := srv.Shutdown(sctx); err != nil {
 		log.Error("sync shutdown", "err", err)
 	}
+	stopFlusher()
+	<-flusherDone
 	if err := httpSrv.Shutdown(sctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

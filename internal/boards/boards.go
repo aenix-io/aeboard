@@ -1,23 +1,26 @@
 // Package boards is the board catalogue: each board's metadata (title, tags)
-// and its Yjs state, kept in one directory per board:
+// and its Yjs state, held in memory and written behind to a Backend.
+//
+// Every board is a directory in the backend:
 //
 //	boards/<id>/board.json   metadata (title, tags, timestamps)
 //	boards/<id>/state.bin    the Yjs V1 state — the source of truth
+//	boards/<id>/doc.json     the same document as JSON, for reading and diffs
 //
-// The layout is the one the git-backed store commits; this package keeps it
-// on a plain directory and holds everything in memory once loaded.
+// Edits are answered from memory at once and only marked dirty. A flush
+// writes the dirty boards to the backend — after a quiet spell, at the
+// latest after a maximum delay, when the last participant leaves a board and
+// on shutdown — so a burst of strokes becomes one write, not hundreds.
 package boards
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,59 +48,72 @@ type Patch struct {
 	Tags  *[]string `json:"tags,omitempty"`
 }
 
-type board struct {
-	meta  Meta
-	state []byte
+// Snapshot is one board as a backend stores it.
+type Snapshot struct {
+	Meta  Meta
+	State []byte
+	// Editors are the logins whose changes this snapshot carries since the
+	// last write (sorted); empty when unknown.
+	Editors []string
 }
 
-// Store is a directory of boards.
+// Backend persists boards.
+type Backend interface {
+	// Load returns every stored board.
+	Load(ctx context.Context) ([]Snapshot, error)
+	// Save writes the given boards.
+	Save(ctx context.Context, boards []Snapshot) error
+}
+
+// Store is the in-memory catalogue over a Backend.
 type Store struct {
-	dir string
-	now func() time.Time
+	backend Backend
+	now     func() time.Time
 
 	mu     sync.Mutex
 	boards map[string]*board
+	// flushMu serialises flushes so two never write the same board at once.
+	flushMu sync.Mutex
+	// changed is signalled (non-blocking) on every new dirty mark.
+	changed chan struct{}
+	// listeners are told when the pending count changes.
+	lmu       sync.Mutex
+	listeners map[int]func()
+	nextL     int
 }
 
-// Open loads every board under dir/boards.
-func Open(dir string) (*Store, error) {
-	s := &Store{dir: filepath.Join(dir, "boards"), now: time.Now, boards: map[string]*board{}}
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(s.dir)
+type board struct {
+	meta  Meta
+	state []byte
+	// dirty is set while the board has changes the backend has not got;
+	// dirtySince is when the oldest of them was made, lastEdit the newest.
+	dirty      bool
+	dirtySince time.Time
+	lastEdit   time.Time
+	editors    map[string]bool
+	// gen counts changes, so a flush that raced an edit leaves it dirty.
+	gen uint64
+}
+
+// Open loads every board from the backend.
+func Open(ctx context.Context, backend Backend) (*Store, error) {
+	snaps, err := backend.Load(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		b, err := s.read(e.Name())
-		if err != nil {
-			return nil, fmt.Errorf("board %s: %w", e.Name(), err)
-		}
-		s.boards[e.Name()] = b
+	s := &Store{
+		backend:   backend,
+		now:       time.Now,
+		boards:    map[string]*board{},
+		changed:   make(chan struct{}, 1),
+		listeners: map[int]func(){},
+	}
+	for _, sn := range snaps {
+		m := sn.Meta
+		m.Tags = normTags(m.Tags)
+		s.boards[m.ID] = &board{meta: m, state: sn.State}
 	}
 	return s, nil
-}
-
-func (s *Store) read(id string) (*board, error) {
-	raw, err := os.ReadFile(filepath.Join(s.dir, id, "board.json"))
-	if err != nil {
-		return nil, err
-	}
-	var m Meta
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, err
-	}
-	m.ID = id
-	m.Tags = normTags(m.Tags)
-	state, err := os.ReadFile(filepath.Join(s.dir, id, "state.bin"))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
-	}
-	return &board{meta: m, state: state}, nil
 }
 
 // List returns every board, most recently updated first.
@@ -128,10 +144,9 @@ func (s *Store) Get(id string) (Meta, error) {
 	return cloneMeta(b.meta), nil
 }
 
-// Create adds a board that starts from the seed state.
-func (s *Store) Create(title string, tags []string) (Meta, error) {
+// Create adds a board that starts from the seed state. actor may be empty.
+func (s *Store) Create(title string, tags []string, actor string) (Meta, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	id := newID()
 	for s.boards[id] != nil {
 		id = newID()
@@ -144,22 +159,20 @@ func (s *Store) Create(title string, tags []string) (Meta, error) {
 	if b.meta.Title == "" {
 		b.meta.Title = "Untitled board"
 	}
-	if err := s.writeMeta(b.meta); err != nil {
-		return Meta{}, err
-	}
-	if err := s.writeState(id, b.state); err != nil {
-		return Meta{}, err
-	}
 	s.boards[id] = b
-	return cloneMeta(b.meta), nil
+	s.markLocked(b, actor)
+	m := cloneMeta(b.meta)
+	s.mu.Unlock()
+	s.notify()
+	return m, nil
 }
 
 // Update applies a metadata patch.
-func (s *Store) Update(id string, p Patch) (Meta, error) {
+func (s *Store) Update(id string, p Patch, actor string) (Meta, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	b, ok := s.boards[id]
 	if !ok {
+		s.mu.Unlock()
 		return Meta{}, ErrNotFound
 	}
 	m := b.meta
@@ -172,11 +185,12 @@ func (s *Store) Update(id string, p Patch) (Meta, error) {
 		m.Tags = normTags(*p.Tags)
 	}
 	m.Updated = s.now().UTC()
-	if err := s.writeMeta(m); err != nil {
-		return Meta{}, err
-	}
 	b.meta = m
-	return cloneMeta(m), nil
+	s.markLocked(b, actor)
+	out := cloneMeta(m)
+	s.mu.Unlock()
+	s.notify()
+	return out, nil
 }
 
 // Tags returns every tag in use, sorted. Tags are case-insensitive: "Ops"
@@ -209,44 +223,302 @@ func (s *Store) LoadState(id string) ([]byte, error) {
 	if len(b.state) == 0 {
 		return seed.Update(), nil
 	}
-	return append([]byte(nil), b.state...), nil
+	return bytes.Clone(b.state), nil
 }
 
 // ApplyUpdate merges a Yjs update into a board's state. It reports whether
 // the state actually changed: an update the state already contains (a peer
-// re-sending what it synced) leaves the board untouched.
-func (s *Store) ApplyUpdate(id string, update []byte) (bool, error) {
+// re-sending what it synced) leaves the board untouched and clean. editors
+// are the logins the change is attributed to.
+func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	b, ok := s.boards[id]
 	if !ok {
+		s.mu.Unlock()
 		return false, ErrNotFound
 	}
 	cur := b.state
 	if len(cur) == 0 {
 		cur = seed.Update()
 	}
-	merged, err := mergeState(cur, update)
+	merged, err := MergeStates(cur, update)
 	if err != nil {
+		s.mu.Unlock()
 		return false, err
 	}
 	if merged == nil {
+		s.mu.Unlock()
 		return false, nil
-	}
-	if err := s.writeState(id, merged); err != nil {
-		return false, err
 	}
 	b.state = merged
 	b.meta.Updated = s.now().UTC()
-	if err := s.writeMeta(b.meta); err != nil {
-		return true, err
+	if len(editors) == 0 {
+		s.markLocked(b, "")
 	}
+	for _, e := range editors {
+		s.markLocked(b, e)
+	}
+	s.mu.Unlock()
+	s.notify()
 	return true, nil
 }
 
-// mergeState folds update into state through a live doc and returns the
+// Remote is a board as another replica wrote it (fetched from git).
+type Remote struct {
+	Meta  Meta
+	State []byte
+}
+
+// MergeRemote folds boards written elsewhere into memory: Yjs states merge
+// (a CRDT, so nothing is lost either way), metadata keeps the more recently
+// updated side. It returns, per board whose state gained something, the
+// update that brings this replica's previous state up to the merged one —
+// what live rooms must be sent. A remote board this store does not know is
+// adopted as is. Merged boards are not marked dirty: the remote has them.
+func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	gained := map[string][]byte{}
+	for _, r := range remotes {
+		id := r.Meta.ID
+		b, ok := s.boards[id]
+		if !ok {
+			m := r.Meta
+			m.Tags = normTags(m.Tags)
+			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State)}
+			continue
+		}
+		if r.Meta.Updated.After(b.meta.Updated) {
+			m := r.Meta
+			m.Tags = normTags(m.Tags)
+			b.meta = m
+		}
+		if len(r.State) == 0 {
+			continue
+		}
+		cur := b.state
+		if len(cur) == 0 {
+			cur = seed.Update()
+		}
+		merged, err := MergeStates(cur, r.State)
+		if err != nil {
+			return gained, fmt.Errorf("board %s: %w", id, err)
+		}
+		if merged == nil {
+			continue
+		}
+		diff, err := diffFrom(cur, merged)
+		if err != nil {
+			return gained, fmt.Errorf("board %s: %w", id, err)
+		}
+		b.state = merged
+		gained[id] = diff
+	}
+	return gained, nil
+}
+
+// diffFrom is the update that takes a doc holding `from` to `to`.
+func diffFrom(from, to []byte) ([]byte, error) {
+	sv, err := crdt.EncodeStateVectorFromUpdate(from)
+	if err != nil {
+		return nil, err
+	}
+	dsv, err := crdt.DecodeStateVectorV1(sv)
+	if err != nil {
+		return nil, err
+	}
+	return crdt.DiffUpdateV1(to, dsv)
+}
+
+// Snapshot returns a board as it is in memory now.
+func (s *Store) Snapshot(id string) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.boards[id]
+	if !ok {
+		return Snapshot{}, ErrNotFound
+	}
+	return snapshotOf(b), nil
+}
+
+func snapshotOf(b *board) Snapshot {
+	state := b.state
+	if len(state) == 0 {
+		state = seed.Update()
+	}
+	eds := make([]string, 0, len(b.editors))
+	for e := range b.editors {
+		eds = append(eds, e)
+	}
+	sort.Strings(eds)
+	return Snapshot{Meta: cloneMeta(b.meta), State: bytes.Clone(state), Editors: eds}
+}
+
+func (s *Store) markLocked(b *board, editor string) {
+	now := s.now()
+	if !b.dirty {
+		b.dirty = true
+		b.dirtySince = now
+	}
+	b.lastEdit = now
+	b.gen++
+	if editor != "" {
+		if b.editors == nil {
+			b.editors = map[string]bool{}
+		}
+		b.editors[editor] = true
+	}
+	select {
+	case s.changed <- struct{}{}:
+	default:
+	}
+}
+
+// Pending is the number of boards with changes not yet written to the
+// backend.
+func (s *Store) Pending() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, b := range s.boards {
+		if b.dirty {
+			n++
+		}
+	}
+	return n
+}
+
+// Subscribe registers fn to be called whenever the pending count may have
+// changed; the returned func unregisters it.
+func (s *Store) Subscribe(fn func()) func() {
+	s.lmu.Lock()
+	defer s.lmu.Unlock()
+	id := s.nextL
+	s.nextL++
+	s.listeners[id] = fn
+	return func() {
+		s.lmu.Lock()
+		defer s.lmu.Unlock()
+		delete(s.listeners, id)
+	}
+}
+
+func (s *Store) notify() {
+	s.lmu.Lock()
+	fns := make([]func(), 0, len(s.listeners))
+	for _, fn := range s.listeners {
+		fns = append(fns, fn)
+	}
+	s.lmu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+}
+
+// Flush writes dirty boards to the backend: the given ids, or every dirty
+// board when none are given. A board edited while its write was in flight
+// stays dirty for the next flush.
+func (s *Store) Flush(ctx context.Context, ids ...string) error {
+	return s.flush(ctx, func(string, *board) bool { return true }, ids...)
+}
+
+func (s *Store) flush(ctx context.Context, due func(string, *board) bool, ids ...string) error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
+	type taken struct {
+		id  string
+		gen uint64
+	}
+	s.mu.Lock()
+	var snaps []Snapshot
+	var took []taken
+	pick := func(id string, b *board) {
+		if b.dirty && due(id, b) {
+			snaps = append(snaps, snapshotOf(b))
+			took = append(took, taken{id, b.gen})
+		}
+	}
+	if len(ids) == 0 {
+		for id, b := range s.boards {
+			pick(id, b)
+		}
+	} else {
+		for _, id := range ids {
+			if b, ok := s.boards[id]; ok {
+				pick(id, b)
+			}
+		}
+	}
+	s.mu.Unlock()
+	if len(snaps) == 0 {
+		return nil
+	}
+	slices.SortFunc(snaps, func(a, b Snapshot) int { return strings.Compare(a.Meta.ID, b.Meta.ID) })
+
+	if err := s.backend.Save(ctx, snaps); err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	for _, t := range took {
+		if b := s.boards[t.id]; b != nil && b.gen == t.gen {
+			b.dirty = false
+			b.editors = nil
+		}
+	}
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+// FlushPolicy says when a dirty board is written without being asked.
+type FlushPolicy struct {
+	// Quiet writes a board once nobody has changed it for this long.
+	Quiet time.Duration
+	// MaxDelay writes a board whose oldest unwritten change is this old,
+	// even while it is still being edited.
+	MaxDelay time.Duration
+	// Tick is how often the policy is checked.
+	Tick time.Duration
+}
+
+// DefaultFlushPolicy suits the git backend: a commit per board per pause in
+// the editing, and at least one a minute on a board in constant use.
+var DefaultFlushPolicy = FlushPolicy{Quiet: 5 * time.Second, MaxDelay: time.Minute, Tick: time.Second}
+
+// RunFlusher writes dirty boards by policy until ctx ends, then flushes
+// everything once more (with a fresh context bounded by final) so shutdown
+// loses nothing. Errors are reported to onErr and retried on the next tick.
+func (s *Store) RunFlusher(ctx context.Context, p FlushPolicy, final time.Duration, onErr func(error)) {
+	t := time.NewTicker(p.Tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			fctx, cancel := context.WithTimeout(context.Background(), final)
+			if err := s.Flush(fctx); err != nil && onErr != nil {
+				onErr(err)
+			}
+			cancel()
+			return
+		case <-t.C:
+		case <-s.changed:
+			continue
+		}
+		now := s.now()
+		err := s.flush(ctx, func(_ string, b *board) bool {
+			return now.Sub(b.lastEdit) >= p.Quiet || now.Sub(b.dirtySince) >= p.MaxDelay
+		})
+		if err != nil && onErr != nil {
+			onErr(err)
+		}
+	}
+}
+
+// MergeStates folds update into state through a live doc and returns the
 // compacted state, or nil when update brought nothing new.
-func mergeState(state, update []byte) ([]byte, error) {
+func MergeStates(state, update []byte) ([]byte, error) {
 	doc := crdt.New()
 	if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil {
 		return nil, fmt.Errorf("apply state: %w", err)
@@ -262,29 +534,6 @@ func mergeState(state, update []byte) ([]byte, error) {
 		return nil, nil
 	}
 	return after, nil
-}
-
-func (s *Store) writeMeta(m Meta) error {
-	raw, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeAtomic(filepath.Join(s.dir, m.ID, "board.json"), append(raw, '\n'))
-}
-
-func (s *Store) writeState(id string, state []byte) error {
-	return writeAtomic(filepath.Join(s.dir, id, "state.bin"), state)
-}
-
-func writeAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }
 
 // normTags trims, drops empties and duplicates, and sorts. Tags compare

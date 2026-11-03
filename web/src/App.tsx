@@ -4,13 +4,16 @@ import { api, type Identity } from './api';
 
 import { BoardList } from './components/BoardList';
 import { BoardPage } from './components/BoardPage';
+import { SyncBadge } from './components/SyncBadge';
 import { WhoAmI } from './components/WhoAmI';
 import { useRoute } from './router';
+import { useSyncStatus } from './sync';
 import { loadName, saveName } from './user';
 
 export function App() {
   const route = useRoute();
   const [name, setName] = useState(loadName);
+  const sync = useSyncStatus();
   // undefined while asking the server; null when anonymous.
   const [identity, setIdentity] = useState<Identity | null | undefined>(undefined);
   useEffect(() => {
@@ -19,14 +22,17 @@ export function App() {
   if (identity === undefined) return null;
   const userName = identity?.login ?? name;
   const who = (
-    <WhoAmI
-      identity={identity}
-      name={name}
-      onChange={n => {
-        setName(n);
-        saveName(n);
-      }}
-    />
+    <>
+      <SyncBadge status={sync} />
+      <WhoAmI
+        identity={identity}
+        name={name}
+        onChange={n => {
+          setName(n);
+          saveName(n);
+        }}
+      />
+    </>
   );
   return (
     <div className="app">

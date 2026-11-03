@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -17,7 +18,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
-	store, err := boards.Open(dir)
+	store, err := boards.Open(context.Background(), boards.DirBackend{Root: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +132,7 @@ func TestMe(t *testing.T) {
 		t.Fatalf("anonymous me: %d", code)
 	}
 	dir := t.TempDir()
-	store, _ := boards.Open(dir)
+	store, _ := boards.Open(context.Background(), boards.DirBackend{Root: dir})
 	blobStore, _ := blobs.Open(dir)
 	srv := New(store, blobStore, fstest.MapFS{}, slog.New(slog.DiscardHandler))
 	srv.SetIdentity(StaticIdentity(Identity{Login: "octocat", AvatarURL: GitHubAvatarURL("octocat")}))
@@ -140,5 +141,14 @@ func TestMe(t *testing.T) {
 	code, body := do(t, "GET", ts2.URL+"/api/v1/me", "")
 	if code != http.StatusOK || !strings.Contains(body, `"login":"octocat"`) || !strings.Contains(body, "avatars.githubusercontent.com/octocat") {
 		t.Fatalf("me: %d %s", code, body)
+	}
+}
+
+func TestStatusCountsPendingBoards(t *testing.T) {
+	ts := newTestServer(t)
+	_, _ = do(t, "POST", ts.URL+"/api/v1/boards", `{"title":"b"}`)
+	code, body := do(t, "GET", ts.URL+"/api/v1/status", "")
+	if code != http.StatusOK || !strings.Contains(body, `"pending":1`) || !strings.Contains(body, `"backend":"dir"`) {
+		t.Fatalf("status: %d %s", code, body)
 	}
 }
