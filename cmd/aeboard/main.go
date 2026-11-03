@@ -1,77 +1,118 @@
-// Command aeboard — compatibility spike: BlockSuite edgeless over a ygo
-// y-websocket server with a naive file persistence.
+// Command aeboard is a collaborative whiteboard: a BlockSuite edgeless SPA
+// embedded in one Go binary that syncs boards over Yjs (ygo) and keeps them
+// in a board store.
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
-	"io/fs"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
-	"sync"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/reearth/ygo/crdt"
-	"github.com/reearth/ygo/provider/websocket"
-
+	"github.com/aenix-io/aeboard/internal/boards"
+	"github.com/aenix-io/aeboard/internal/server"
 	"github.com/aenix-io/aeboard/web"
 )
 
-type filePersistence struct {
-	dir string
-	mu  sync.Mutex
-}
-
-func (p *filePersistence) path(room string) string { return filepath.Join(p.dir, room+".bin") }
-
-func (p *filePersistence) LoadDoc(room string) ([]byte, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	b, err := os.ReadFile(p.path(room))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	slog.Info("load", "room", room, "bytes", len(b))
-	return b, err
-}
-
-func (p *filePersistence) StoreUpdate(room string, update []byte) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	cur, err := os.ReadFile(p.path(room))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	merged := update
-	if len(cur) > 0 {
-		if merged, err = crdt.MergeUpdatesV1(cur, update); err != nil {
-			return err
-		}
-	}
-	slog.Info("store", "room", room, "update", len(update), "state", len(merged))
-	tmp := p.path(room) + ".tmp"
-	if err := os.WriteFile(tmp, merged, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p.path(room))
-}
+// version is overridden at build time via -ldflags "-X main.version=...".
+var version = "dev"
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8766", "listen address")
-	data := flag.String("data", "./data", "data directory")
-	flag.Parse()
-	if err := os.MkdirAll(*data, 0o700); err != nil {
-		panic(err)
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "aeboard:", err)
+		os.Exit(1)
 	}
-	srv := websocket.NewServerWithPersistence(&filePersistence{dir: *data})
-	mux := http.NewServeMux()
-	mux.Handle("/api/v1/sync/{room}", srv)
+}
+
+func run(args []string) error {
+	if len(args) == 0 {
+		usage()
+		return nil
+	}
+	switch args[0] {
+	case "serve":
+		return runServe(args[1:])
+	case "version", "--version", "-v":
+		fmt.Println(version)
+		return nil
+	case "help", "--help", "-h":
+		usage()
+		return nil
+	}
+	usage()
+	return fmt.Errorf("unknown command %q", args[0])
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `aeboard — collaborative whiteboard
+
+Usage:
+  aeboard serve [flags]   run the server
+  aeboard version         print the version
+
+Run "aeboard serve -h" for the serve flags.
+`)
+}
+
+func runServe(args []string) error {
+	fl := flag.NewFlagSet("serve", flag.ContinueOnError)
+	addr := fl.String("addr", envOr("AEBOARD_ADDR", "127.0.0.1:8766"), "listen address")
+	data := fl.String("data", envOr("AEBOARD_DATA", "./data"), "data directory")
+	debug := fl.Bool("debug", false, "debug logging")
+	if err := fl.Parse(args); err != nil {
+		return err
+	}
+	level := slog.LevelInfo
+	if *debug {
+		level = slog.LevelDebug
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+
+	store, err := boards.Open(*data)
+	if err != nil {
+		return fmt.Errorf("open board store: %w", err)
+	}
 	dist, err := web.DistFS()
 	if err != nil {
-		panic(err)
+		return err
 	}
-	mux.Handle("/", http.FileServerFS(dist))
-	slog.Info("listening", "addr", *addr)
-	panic(http.ListenAndServe(*addr, mux))
+	srv := server.New(store, dist, log)
+	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	errc := make(chan error, 1)
+	go func() {
+		log.Info("listening", "addr", "http://"+*addr, "data", *data, "version", version)
+		errc <- httpSrv.ListenAndServe()
+	}()
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	log.Info("shutting down")
+	sctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	// Flush the rooms first (their pending coalesced updates), then stop HTTP.
+	if err := srv.Shutdown(sctx); err != nil {
+		log.Error("sync shutdown", "err", err)
+	}
+	if err := httpSrv.Shutdown(sctx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
