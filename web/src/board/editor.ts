@@ -6,10 +6,25 @@ import '@toeverything/theme/style.css';
 import { TestAffineEditorContainer } from '@blocksuite/integration-test';
 import { getTestStoreManager } from '@blocksuite/integration-test/store';
 import { getTestViewManager } from '@blocksuite/integration-test/view';
+import { DocModeExtension, type DocModeProvider } from '@blocksuite/affine/shared/services';
+import { Subject } from 'rxjs';
 import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 
 import { BoardWorkspace } from './workspace';
+
+// A board is always edgeless. BlockSuite's default DocModeProvider answers
+// "page", and the selection toolbar (fill/border colours, text, connectors,
+// lock…) only shows for surface elements in edgeless mode, so without this
+// override selecting a shape shows no toolbar at all.
+const edgelessOnly: DocModeProvider = {
+  getEditorMode: () => 'edgeless',
+  setEditorMode: () => {},
+  getPrimaryMode: () => 'edgeless',
+  setPrimaryMode: () => {},
+  togglePrimaryMode: () => 'edgeless',
+  onPrimaryModeChange: () => new Subject<never>().subscribe(),
+};
 
 let defined = false;
 function defineElements() {
@@ -70,7 +85,7 @@ export async function openBoard(boardId: string, user: User, mount: HTMLElement)
   const editor = new TestAffineEditorContainer();
   editor.doc = store;
   editor.pageSpecs = getTestViewManager().get('page');
-  editor.edgelessSpecs = getTestViewManager().get('edgeless');
+  editor.edgelessSpecs = [...getTestViewManager().get('edgeless'), DocModeExtension(edgelessOnly)];
   editor.mode = 'edgeless';
   mount.replaceChildren(editor);
 
