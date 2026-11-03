@@ -10,12 +10,18 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/aenix-io/aeboard/internal/blobs"
 	"github.com/aenix-io/aeboard/internal/boards"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	store, err := boards.Open(t.TempDir())
+	dir := t.TempDir()
+	store, err := boards.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobStore, err := blobs.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,7 +29,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 		"index.html":    {Data: []byte("<html>app</html>")},
 		"assets/app.js": {Data: []byte("js")},
 	}
-	ts := httptest.NewServer(New(store, spa, slog.New(slog.DiscardHandler)).Handler())
+	ts := httptest.NewServer(New(store, blobStore, spa, slog.New(slog.DiscardHandler)).Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -87,5 +93,34 @@ func TestSPAFallback(t *testing.T) {
 	}
 	if _, body := do(t, "GET", ts.URL+"/assets/app.js", ""); body != "js" {
 		t.Fatalf("asset: %q", body)
+	}
+}
+
+func TestBlobRoundTripAndHashCheck(t *testing.T) {
+	ts := newTestServer(t)
+	_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"title":"b"}`)
+	var m boards.Meta
+	_ = json.Unmarshal([]byte(body), &m)
+	svg := `<svg xmlns="http://www.w3.org/2000/svg"/>`
+	key := blobs.Key([]byte(svg))
+	url := ts.URL + "/api/v1/boards/" + m.ID + "/blobs/" + key
+
+	req, _ := http.NewRequest("PUT", url, strings.NewReader(svg))
+	req.Header.Set("Content-Type", "image/svg+xml")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("put: %v %v", err, resp.Status)
+	}
+	resp, _ = http.Get(url)
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if string(got) != svg || resp.Header.Get("Content-Type") != "image/svg+xml" || resp.Header.Get("Content-Security-Policy") == "" {
+		t.Fatalf("get: %q %v", got, resp.Header)
+	}
+	if code, _ := do(t, "PUT", url, "other"); code != http.StatusBadRequest {
+		t.Fatalf("mismatched put: %d", code)
+	}
+	if code, _ := do(t, "GET", ts.URL+"/api/v1/boards/0000000000/blobs/"+key, ""); code != http.StatusNotFound {
+		t.Fatalf("blob of unknown board: %d", code)
 	}
 }

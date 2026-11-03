@@ -10,23 +10,26 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/reearth/ygo/provider/websocket"
 
+	"github.com/aenix-io/aeboard/internal/blobs"
 	"github.com/aenix-io/aeboard/internal/boards"
 )
 
 // Server wires the board store to HTTP.
 type Server struct {
 	store *boards.Store
+	blobs *blobs.Store
 	sync  *websocket.Server
 	spa   fs.FS
 	log   *slog.Logger
 }
 
-// New returns a server over store, serving the SPA from spa.
-func New(store *boards.Store, spa fs.FS, log *slog.Logger) *Server {
-	s := &Server{store: store, spa: spa, log: log}
+// New returns a server over store and its attachments, serving the SPA from spa.
+func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logger) *Server {
+	s := &Server{store: store, blobs: blobStore, spa: spa, log: log}
 	s.sync = websocket.NewServerWithPersistence(persistence{store: store, log: log})
 	s.sync.Logger = log
 	// A room is a board: refuse the upgrade for an id that names none, so a
@@ -49,6 +52,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
+	mux.HandleFunc("GET /api/v1/boards/{id}/blobs/{key}", s.getBlob)
+	mux.HandleFunc("PUT /api/v1/boards/{id}/blobs/{key}", s.putBlob)
 	mux.Handle("/api/v1/sync/{room}", s.sync)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -110,6 +115,53 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// Attachments are addressed per board so access can follow the board's
+// rights; the bytes themselves are shared by content (see package blobs).
+func (s *Server) getBlob(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.store.Get(r.PathValue("id")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	f, mt, err := s.blobs.Open(r.PathValue("key"))
+	if errors.Is(err, blobs.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "blob not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "storage error")
+		return
+	}
+	defer f.Close()
+	if mt == "" {
+		mt = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", mt)
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	// Uploaded content is served as data, never as a page of this origin.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeContent(w, r, "", time.Time{}, f)
+}
+
+func (s *Server) putBlob(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.store.Get(r.PathValue("id")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	err := s.blobs.Put(r.PathValue("key"), r.Header.Get("Content-Type"), r.Body)
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, blobs.ErrHashMismatch):
+		writeError(w, http.StatusBadRequest, "content does not match the key")
+	case errors.Is(err, blobs.ErrTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "attachment too large")
+	default:
+		s.log.Error("store blob", "err", err)
+		writeError(w, http.StatusInternalServerError, "storage error")
+	}
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {

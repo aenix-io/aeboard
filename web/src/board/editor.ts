@@ -11,6 +11,7 @@ import { Subject } from 'rxjs';
 import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 
+import { ServerBlobSource } from './blobs';
 import { BoardWorkspace } from './workspace';
 
 // A board is always edgeless. BlockSuite's default DocModeProvider answers
@@ -65,7 +66,12 @@ export async function openBoard(boardId: string, user: User, mount: HTMLElement)
     provider.on('sync', onSync);
   });
 
-  const ws = new BoardWorkspace({ id: boardId, spaceDoc: doc, awareness: provider.awareness });
+  const ws = new BoardWorkspace({
+    id: boardId,
+    spaceDoc: doc,
+    awareness: provider.awareness,
+    blobSource: new ServerBlobSource(boardId),
+  });
   ws.storeExtensions = getTestStoreManager().get('store');
   const bdoc = ws.getDoc(boardId)!;
   const store = bdoc.getStore();

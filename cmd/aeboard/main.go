@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aenix-io/aeboard/internal/blobs"
 	"github.com/aenix-io/aeboard/internal/boards"
 	"github.com/aenix-io/aeboard/internal/server"
 	"github.com/aenix-io/aeboard/web"
@@ -78,11 +79,15 @@ func runServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open board store: %w", err)
 	}
+	blobStore, err := blobs.Open(*data)
+	if err != nil {
+		return fmt.Errorf("open attachment store: %w", err)
+	}
 	dist, err := web.DistFS()
 	if err != nil {
 		return err
 	}
-	srv := server.New(store, dist, log)
+	srv := server.New(store, blobStore, dist, log)
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
