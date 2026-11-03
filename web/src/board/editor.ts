@@ -6,7 +6,6 @@ import '@toeverything/theme/style.css';
 import { TestAffineEditorContainer } from '@blocksuite/integration-test';
 import { getTestStoreManager } from '@blocksuite/integration-test/store';
 import { getTestViewManager } from '@blocksuite/integration-test/view';
-import { Text } from '@blocksuite/affine/store';
 import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 
@@ -30,9 +29,8 @@ export interface User {
   name: string;
 }
 
-// openBoard connects to the board's room, waits for the first sync (so an
-// existing board is never re-initialised), creates the root blocks only when
-// the synced document is still empty, and mounts the editor into `mount`.
+// openBoard connects to the board's room, waits for the first sync and mounts
+// the editor into `mount`.
 export async function openBoard(boardId: string, user: User, mount: HTMLElement): Promise<BoardSession> {
   defineElements();
   const doc = new Y.Doc({ guid: boardId });
@@ -59,11 +57,14 @@ export async function openBoard(boardId: string, user: User, mount: HTMLElement)
   // store.load (not doc.load): it also runs the store extensions' loaded()
   // hooks — selection among them, which is what subscribes to remote
   // awareness. doc.load alone leaves remote cursors/selections dark.
-  store.load(() => {
-    if (store.root) return;
-    const rootId = store.addBlock('affine:page', { title: new Text() });
-    store.addBlock('affine:surface', {}, rootId);
-  });
+  store.load();
+  // The root blocks come from the server: every board starts from the seed
+  // state (internal/seed), so the client never creates them — two clients
+  // doing that at once would leave the board with two roots.
+  if (!store.root) {
+    provider.destroy();
+    throw new Error('the board has no root block (was it created through the server?)');
+  }
   store.resetHistory();
 
   const editor = new TestAffineEditorContainer();

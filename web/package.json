@@ -15,6 +15,7 @@
     "@toeverything/theme": "^1.1.23",
     "change-case": "^4.1.2",
     "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "y-protocols": "1.0.6",
     "y-websocket": "3.0.0",
     "yjs": "13.6.30"
@@ -22,7 +23,10 @@
   "devDependencies": {
     "@playwright/test": "^1.56.1",
     "@types/node": "^22.20.5",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@vanilla-extract/vite-plugin": "^5.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "rxjs": "^7.8.2",
     "typescript": "^5.8.3",
     "vite": "^6.1.0",

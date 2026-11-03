@@ -1,0 +1,105 @@
+/* aeboard shell styles. Tokens follow aeman's light theme so the two tools
+   read as one family; the board canvas itself is styled by BlockSuite. */
+:root {
+  color-scheme: light;
+  --fg: #1f2328;
+  --muted: #57606a;
+  --faint: #8c959f;
+  --line: #d0d7de;
+  --line-soft: #eaeef2;
+  --bg: #ffffff;
+  --bg-soft: #f6f8fa;
+  --accent: #0969da;
+  --danger: #cf222e;
+  --radius: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+html, body, #app, .app { margin: 0; height: 100%; }
+
+button, input { font: inherit; color: inherit; }
+button {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 5px 12px;
+  cursor: pointer;
+}
+button:hover { background: var(--bg-soft); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { filter: brightness(0.95); }
+button:disabled { opacity: 0.6; cursor: default; }
+/* .app-scoped: BlockSuite's global styles reset input borders once the editor
+   bundle loads, so bare element selectors lose to them. */
+.app input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  background: var(--bg);
+}
+.app input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.link-button { border: none; background: none; color: var(--muted); padding: 2px 6px; font-size: 12px; }
+.link-button:hover { color: var(--accent); background: none; }
+.muted { color: var(--muted); }
+.error { color: var(--danger); }
+
+/* identity (until sign-in lands) */
+.whoami { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.whoami input { width: 130px; padding: 4px 8px; font-size: 12px; }
+.spacer { flex: 1; }
+
+/* board list */
+.page { max-width: 1100px; margin: 0 auto; padding: 16px 16px 40px; }
+.list-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 28px 0 12px; }
+.list-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.list-tools { display: flex; gap: 8px; flex: 1; justify-content: flex-end; flex-wrap: wrap; }
+.search { width: 220px; max-width: 100%; }
+
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
+  padding: 1px 9px; font-size: 12px; line-height: 18px; user-select: none;
+}
+.chip-filter { cursor: pointer; opacity: 0.55; }
+.chip-filter:hover { opacity: 0.85; background: var(--bg); }
+.chip-filter.chip-on { opacity: 1; border-color: var(--accent); background: var(--bg-soft); }
+.chip-x { border: none; background: none; padding: 0 0 0 3px; color: var(--faint); font-size: 13px; line-height: 1; }
+.chip-x:hover { color: var(--danger); background: none; }
+.chip-input { width: 110px; padding: 1px 8px; font-size: 12px; border-radius: 12px; }
+.chips-small .chip { font-size: 11px; padding: 0 7px; line-height: 16px; }
+
+.create { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 16px 0; padding: 12px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-soft); }
+.create input:first-child { flex: 1 1 240px; }
+.create input:nth-child(2) { flex: 1 1 200px; }
+
+.empty { text-align: center; padding: 60px 0; color: var(--muted); }
+
+.board-grid { list-style: none; padding: 0; margin: 16px 0 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.board-card {
+  display: flex; flex-direction: column; gap: 6px; height: 100%; box-sizing: border-box;
+  padding: 14px; border: 1px solid var(--line); border-radius: 8px;
+  color: inherit; text-decoration: none; background: var(--bg);
+}
+.board-card:hover { border-color: var(--accent); box-shadow: 0 1px 4px rgba(27, 31, 36, 0.08); }
+.board-title { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.board-meta { color: var(--muted); font-size: 12px; }
+
+/* board page */
+.board-page { display: flex; flex-direction: column; height: 100%; }
+.board-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--line-soft); min-height: 30px;
+}
+.back { color: var(--muted); text-decoration: none; white-space: nowrap; }
+.back:hover { color: var(--accent); }
+.app .title-input { border-color: transparent; font-weight: 600; font-size: 15px; min-width: 120px; width: 280px; max-width: 100%; }
+.app .title-input:hover { border-color: var(--line); }
+.editor-mount { flex: 1; min-height: 0; position: relative; }
+.editor-mount > * { height: 100%; }

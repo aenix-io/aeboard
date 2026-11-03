@@ -1,5 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { vanillaExtractPlugin } from '@vanilla-extract/vite-plugin';
+import react from '@vitejs/plugin-react';
 import { defineConfig, type Plugin } from 'vite';
 
 // keepDist re-creates dist/.gitkeep after every build: the Go binary embeds
@@ -17,7 +18,7 @@ function keepDist(): Plugin {
 // During `vite dev`, /api/* (REST and the sync WebSocket) is proxied to the
 // aeboard Go binary.
 export default defineConfig({
-  plugins: [vanillaExtractPlugin(), keepDist()],
+  plugins: [react(), vanillaExtractPlugin(), keepDist()],
   build: { outDir: 'dist', emptyOutDir: true, target: 'es2022' },
   esbuild: { target: 'es2022' },
   optimizeDeps: { esbuildOptions: { target: 'es2022' } },

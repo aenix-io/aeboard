@@ -10,6 +10,7 @@
     "experimentalDecorators": false,
     "useDefineForClassFields": false,
     "isolatedModules": true,
+    "jsx": "react-jsx",
     "types": ["vite/client", "node"]
   },
   "include": ["src"]

@@ -1,13 +1,18 @@
-// Edge cases: concurrent first open of an empty board; offline edit across a server restart.
+// Two browsers on one board: concurrent first open, then an edit made while
+// the server is down must reach the other browser and the store after restart.
+// usage: node e2e/restart.mjs <baseURL> '<cmd to stop/start the server, {phase}=stop|start>'
 import { chromium } from '@playwright/test';
 import { execSync } from 'node:child_process';
 
-const [base, board, restartCmd] = process.argv.slice(2);
+const [base, restartCmd] = process.argv.slice(2);
+const created = await fetch(`${base}/api/v1/boards`, { method: 'POST', body: JSON.stringify({ title: 'restart test' }) }).then(r => r.json());
+const board = created.id;
 const browser = await chromium.launch();
 const open = async (name, wait = true) => {
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 800 } })).newPage();
   page.on('pageerror', e => console.log(`[${name}] pageerror`, e.message));
-  const nav = page.goto(`${base}/?board=${board}&name=${name}`);
+  await page.addInitScript(n => localStorage.setItem('aeboard.name', n), name);
+  const nav = page.goto(`${base}/b/${board}`);
   if (wait) { await nav; await page.waitForSelector('affine-edgeless-root', { timeout: 30000 }); }
   return { page, nav };
 };
