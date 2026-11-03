@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
 
+import type { Identity } from '../api';
+
 interface Props {
+  /** The known identity (gh locally, the session when hosted). */
+  identity: Identity | null;
   name: string;
   onChange: (name: string) => void;
 }
 
-/** WhoAmI edits the name shown on this visitor's cursor (until sign-in lands). */
-export function WhoAmI({ name, onChange }: Props) {
+/**
+ * WhoAmI shows who this visitor is on the board: their GitHub avatar and
+ * login when the server knows them, otherwise an editable display name.
+ */
+export function WhoAmI({ identity, name, onChange }: Props) {
   const [draft, setDraft] = useState(name);
   useEffect(() => setDraft(name), [name]);
   const commit = () => {
@@ -14,6 +21,14 @@ export function WhoAmI({ name, onChange }: Props) {
     if (n && n !== name) onChange(n);
     else setDraft(name);
   };
+  if (identity) {
+    return (
+      <span className="whoami" title={identity.name ? `${identity.name} (${identity.login})` : identity.login}>
+        {identity.avatarUrl && <img className="avatar" src={identity.avatarUrl} alt="" width={22} height={22} />}
+        <span className="whoami-login">{identity.login}</span>
+      </span>
+    );
+  }
   return (
     <label className="whoami">
       <span>You</span>

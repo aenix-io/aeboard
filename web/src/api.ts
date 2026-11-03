@@ -31,7 +31,18 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return (await resp.json()) as T;
 }
 
+export interface Identity {
+  login: string;
+  name?: string;
+  avatarUrl?: string;
+}
+
 export const api = {
+  /** me resolves the signed-in (or, locally, gh) identity; null when anonymous. */
+  me: async (): Promise<Identity | null> => {
+    const resp = await fetch('/api/v1/me');
+    return resp.ok ? ((await resp.json()) as Identity) : null;
+  },
   listBoards: () => call<BoardList>('GET', '/boards'),
   getBoard: (id: string) => call<Board>('GET', `/boards/${id}`),
   createBoard: (title: string, tags: string[]) => call<Board>('POST', '/boards', { title, tags }),

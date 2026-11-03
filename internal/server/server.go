@@ -25,6 +25,8 @@ type Server struct {
 	sync  *websocket.Server
 	spa   fs.FS
 	log   *slog.Logger
+
+	identity IdentityFunc
 }
 
 // New returns a server over store and its attachments, serving the SPA from spa.
@@ -48,6 +50,7 @@ func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logge
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/me", s.me)
 	mux.HandleFunc("GET /api/v1/boards", s.listBoards)
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)

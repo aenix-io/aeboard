@@ -49,6 +49,8 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 /* identity (until sign-in lands) */
 .whoami { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.whoami .avatar { border-radius: 50%; border: 1px solid var(--line-soft); }
+.whoami-login { color: var(--fg); font-weight: 500; }
 .whoami input { width: 130px; padding: 4px 8px; font-size: 12px; }
 .spacer { flex: 1; }
 

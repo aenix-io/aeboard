@@ -124,3 +124,21 @@ func TestBlobRoundTripAndHashCheck(t *testing.T) {
 		t.Fatalf("blob of unknown board: %d", code)
 	}
 }
+
+func TestMe(t *testing.T) {
+	ts := newTestServer(t)
+	if code, _ := do(t, "GET", ts.URL+"/api/v1/me", ""); code != http.StatusUnauthorized {
+		t.Fatalf("anonymous me: %d", code)
+	}
+	dir := t.TempDir()
+	store, _ := boards.Open(dir)
+	blobStore, _ := blobs.Open(dir)
+	srv := New(store, blobStore, fstest.MapFS{}, slog.New(slog.DiscardHandler))
+	srv.SetIdentity(StaticIdentity(Identity{Login: "octocat", AvatarURL: GitHubAvatarURL("octocat")}))
+	ts2 := httptest.NewServer(srv.Handler())
+	defer ts2.Close()
+	code, body := do(t, "GET", ts2.URL+"/api/v1/me", "")
+	if code != http.StatusOK || !strings.Contains(body, `"login":"octocat"`) || !strings.Contains(body, "avatars.githubusercontent.com/octocat") {
+		t.Fatalf("me: %d %s", code, body)
+	}
+}

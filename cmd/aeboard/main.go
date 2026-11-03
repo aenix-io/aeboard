@@ -17,6 +17,7 @@ import (
 
 	"github.com/aenix-io/aeboard/internal/blobs"
 	"github.com/aenix-io/aeboard/internal/boards"
+	"github.com/aenix-io/aeboard/internal/ghcli"
 	"github.com/aenix-io/aeboard/internal/server"
 	"github.com/aenix-io/aeboard/web"
 )
@@ -65,6 +66,8 @@ func runServe(args []string) error {
 	fl := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fl.String("addr", envOr("AEBOARD_ADDR", "127.0.0.1:8766"), "listen address")
 	data := fl.String("data", envOr("AEBOARD_DATA", "./data"), "data directory")
+	identity := fl.String("identity", envOr("AEBOARD_IDENTITY", "gh"),
+		`who edits: "gh" (the account the local gh CLI is logged in as) or "none" (anonymous, names chosen in the browser)`)
 	debug := fl.Bool("debug", false, "debug logging")
 	if err := fl.Parse(args); err != nil {
 		return err
@@ -88,6 +91,24 @@ func runServe(args []string) error {
 		return err
 	}
 	srv := server.New(store, blobStore, dist, log)
+	switch *identity {
+	case "gh":
+		// Like `aeman serve`: a local server acts as the gh account.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		u, err := ghcli.CurrentUser(ctx)
+		cancel()
+		if err != nil {
+			log.Warn("no gh identity, editing anonymously (run `gh auth login`, or pass --identity none)", "err", err)
+			break
+		}
+		log.Info("identity from gh", "login", u.Login)
+		srv.SetIdentity(server.StaticIdentity(server.Identity{
+			Login: u.Login, Name: u.Name, AvatarURL: server.GitHubAvatarURL(u.Login),
+		}))
+	case "none":
+	default:
+		return fmt.Errorf("--identity: want gh or none, got %q", *identity)
+	}
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
