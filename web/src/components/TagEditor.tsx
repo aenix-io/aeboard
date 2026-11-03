@@ -6,11 +6,13 @@ interface Props {
   tags: string[];
   /** Every tag in use, offered as suggestions. */
   known?: string[];
+  /** Show the tags only. */
+  readOnly?: boolean;
   onChange: (tags: string[]) => void;
 }
 
 /** TagEditor edits one board's tags: × removes, "+ tag" adds (comma-separated). */
-export function TagEditor({ tags, known = [], onChange }: Props) {
+export function TagEditor({ tags, known = [], readOnly, onChange }: Props) {
   const [adding, setAdding] = useState(false);
   const [value, setValue] = useState('');
   const commit = () => {
@@ -19,6 +21,17 @@ export function TagEditor({ tags, known = [], onChange }: Props) {
     setValue('');
     setAdding(false);
   };
+  if (readOnly) {
+    return (
+      <div className="chips">
+        {tags.map(t => (
+          <span key={t} className="chip">
+            {t}
+          </span>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="chips">
       {tags.map(t => (

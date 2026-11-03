@@ -33,7 +33,7 @@ const when = (iso: string) => {
 };
 
 /** BoardList is the start page: every board, a tag filter, and "New board". */
-export function BoardList({ whoami }: { whoami: ReactNode }) {
+export function BoardList({ canWrite, whoami }: { canWrite: boolean; whoami: ReactNode }) {
   const [boards, setBoards] = useState<Board[] | null>(null);
   const [tags, setTags] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -80,9 +80,11 @@ export function BoardList({ whoami }: { whoami: ReactNode }) {
               onChange={e => setQuery(e.target.value)}
             />
           )}
-          <button type="button" className="primary" onClick={() => setCreating(true)}>
-            New board
-          </button>
+          {canWrite && (
+            <button type="button" className="primary" onClick={() => setCreating(true)}>
+              New board
+            </button>
+          )}
           {whoami}
         </div>
       </header>
@@ -96,9 +98,11 @@ export function BoardList({ whoami }: { whoami: ReactNode }) {
       {empty && !creating && (
         <div className="empty">
           <p>No boards yet.</p>
-          <button type="button" className="primary" onClick={() => setCreating(true)}>
-            Create the first board
-          </button>
+          {canWrite && (
+            <button type="button" className="primary" onClick={() => setCreating(true)}>
+              Create the first board
+            </button>
+          )}
         </div>
       )}
       {boards && !empty && shown.length === 0 && <p className="muted">No boards match the filter.</p>}

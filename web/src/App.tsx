@@ -1,34 +1,72 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
-import { api, type Identity } from './api';
+import { api, type Me, SIGNED_OUT, type WhoResult } from './api';
 
 import { BoardList } from './components/BoardList';
 import { BoardPage } from './components/BoardPage';
+import { NoAccess, SignIn } from './components/SignIn';
 import { SyncBadge } from './components/SyncBadge';
 import { WhoAmI } from './components/WhoAmI';
-import { useRoute } from './router';
+import { type Route, useRoute } from './router';
 import { useSyncStatus } from './sync';
 import { loadName, saveName } from './user';
 
 export function App() {
   const route = useRoute();
   const [name, setName] = useState(loadName);
-  const sync = useSyncStatus();
-  // undefined while asking the server; null when anonymous.
-  const [identity, setIdentity] = useState<Identity | null | undefined>(undefined);
-  useEffect(() => {
-    api.me().then(setIdentity, () => setIdentity(null));
+  // undefined while asking the server.
+  const [who, setWho] = useState<WhoResult | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const ask = useCallback(() => {
+    api.me().then(
+      w => {
+        setWho(w);
+        setError(null);
+      },
+      e => setError(String((e as Error).message ?? e)),
+    );
   }, []);
-  if (identity === undefined) return null;
-  const userName = identity?.login ?? name;
-  const who = (
+  useEffect(() => {
+    ask();
+    // A 401 from any call means the session is gone: ask again, which
+    // lands on the sign-in screen.
+    window.addEventListener(SIGNED_OUT, ask);
+    return () => window.removeEventListener(SIGNED_OUT, ask);
+  }, [ask]);
+
+  if (error && !who) return <p className="error page">Could not reach the server: {error}</p>;
+  if (who === undefined) return null;
+  if (who.kind === 'signedOut') return <SignIn forge={who.forge} />;
+  const me = who.kind === 'known' ? who.me : null;
+  if (me?.access === 'none') return <NoAccess login={me.login} repo={me.repo} />;
+  return <Boards me={me} name={name} onName={setName} route={route} />;
+}
+
+function Boards({
+  me,
+  name,
+  onName,
+  route,
+}: {
+  me: Me | null;
+  name: string;
+  onName: (n: string) => void;
+  route: Route;
+}) {
+  // The status stream is behind the sign-in, so it only starts here.
+  const sync = useSyncStatus();
+  const userName = me?.login ?? name;
+  const canWrite = !me || me.access === 'write';
+  const whoami = (
     <>
       <SyncBadge status={sync} />
       <WhoAmI
-        identity={identity}
+        identity={me}
+        hosted={!!me?.hosted}
+        readOnly={!canWrite}
         name={name}
         onChange={n => {
-          setName(n);
+          onName(n);
           saveName(n);
         }}
       />
@@ -37,9 +75,9 @@ export function App() {
   return (
     <div className="app">
       {route.name === 'board' ? (
-        <BoardPage key={route.id} id={route.id} userName={userName} whoami={who} />
+        <BoardPage key={route.id} id={route.id} userName={userName} canWrite={canWrite} whoami={whoami} />
       ) : (
-        <BoardList whoami={who} />
+        <BoardList canWrite={canWrite} whoami={whoami} />
       )}
     </div>
   );
