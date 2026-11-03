@@ -1,0 +1,103 @@
+# aeboard runs as ONE replica: the live rooms, the write-behind queue and the
+# git clone under /data have exactly one writer. 0 parks it (maintenance, a
+# move between hosts); anything above 1 is refused.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/aenix-io/aeboard
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# The board repository (the boards' source of truth).
+repo: {}
+#  url: https://github.com/example/aeboard-db
+#  branch: main
+
+# Hosted mode: visitors sign in with GitHub (the AEBOARD_GITHUB_* settings in
+# existingSecret/env). false runs the anonymous mode — only behind something
+# that authenticates for it.
+hosted: true
+
+# The Secret holding the AEBOARD_* settings that must not live in values:
+# AEBOARD_SESSION_KEY, AEBOARD_GITHUB_CLIENT_SECRET, AEBOARD_GITHUB_APP_KEY
+# (base64 of the PEM), AEBOARD_GIT_TOKEN, ... Every key becomes an environment
+# variable. Create it out of band, e.g.
+#   kubectl create secret generic aeboard-env --from-env-file=aeboard.env
+# See docs/deploy.md for the full list of variables.
+existingSecret: ""
+
+# Plain (non-secret) AEBOARD_* settings, rendered as environment variables.
+# They win over the same keys in existingSecret.
+env: {}
+#  AEBOARD_BASE_URL: https://aeboard.example.com
+#  AEBOARD_GITHUB_CLIENT_ID: Iv23xxxxxxxx
+#  AEBOARD_GITHUB_APP_ID: "123456"
+
+# Soft heap ceiling for the Go runtime. Keep it below the memory limit so the
+# collector works harder before the kernel kills the pod.
+goMemLimit: 900MiB
+
+service:
+  type: ClusterIP
+  port: 8766
+
+# /data holds the shallow clone of the board repository, the attachments
+# (images, stickers — NOT in git, so this volume is their only copy) and the
+# session store. Losing it costs a re-clone, a re-login and the attachments.
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 5Gi
+  accessMode: ReadWriteOnce
+  existingClaim: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Plain Ingress (with cert-manager). Use this OR the Cloudflare tunnel below.
+ingress:
+  enabled: false
+  className: ""
+  host: aeboard.example.com
+  # cert-manager ClusterIssuer; empty = no TLS annotation.
+  clusterIssuer: ""
+  tlsSecretName: aeboard-tls
+  annotations:
+    # The editor keeps a WebSocket open per board, the header an SSE stream.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+
+# A Cloudflare Tunnel connector in front of the service, for an instance
+# published through Cloudflare without an ingress. The tunnel credentials
+# (the <tunnel-id>.json written by `cloudflared tunnel create`) live in a
+# Secret created out of band, under the key `credentials.json`.
+cloudflared:
+  enabled: false
+  image:
+    repository: cloudflare/cloudflared
+    tag: "2026.10.7"
+  replicas: 1
+  tunnelId: ""
+  hostname: aeboard.example.com
+  existingSecret: ""
+  # http2 over TCP/443: QUIC drops silently on some networks while the
+  # process stays alive, so nothing restarts it.
+  protocol: http2
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi

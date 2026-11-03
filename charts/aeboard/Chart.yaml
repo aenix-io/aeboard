@@ -1,0 +1,9 @@
+apiVersion: v2
+name: aeboard
+description: aeboard, a collaborative whiteboard (BlockSuite edgeless) that keeps its boards in a git repository
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/aenix-io/aeboard
+sources:
+  - https://github.com/aenix-io/aeboard
