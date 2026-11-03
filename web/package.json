@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc -b",
-    "test": "vitest run"
+    "build": "tsc -p . && vite build",
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "paths": "node scripts/gen-blocksuite-paths.mjs",
+    "postinstall": "node scripts/gen-blocksuite-paths.mjs"
   },
   "dependencies": {
     "@blocksuite/affine": "0.22.4",
