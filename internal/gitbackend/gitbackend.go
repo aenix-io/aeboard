@@ -1,7 +1,7 @@
 // Package gitbackend stores boards in a git repository and keeps it in step
 // with a remote.
 //
-// Every write of a board is one commit (boards/<id>/{board.json,state.bin,
+// Every write of a board is one commit (boards/<id>/{board.json,state.jsonl,
 // doc.json}) authored by the people whose changes it carries. A background
 // loop pushes new commits and fetches what other replicas pushed.
 //
@@ -119,12 +119,24 @@ func (b *Backend) read(at plumbing.Hash, id string) (boards.Snapshot, bool, erro
 	if err != nil {
 		return boards.Snapshot{}, false, err
 	}
-	state, err := b.repo.ReadFileAt(at, boards.StatePath(id))
-	if err != nil && !errors.Is(err, gitstore.ErrNotFound) {
+	state, err := b.readOptional(at, boards.StatePath(id))
+	if err != nil {
 		return boards.Snapshot{}, false, err
 	}
-	sn, err := boards.Decode(id, meta, state)
+	legacy, err := b.readOptional(at, boards.LegacyStatePath(id))
+	if err != nil {
+		return boards.Snapshot{}, false, err
+	}
+	sn, err := boards.Decode(id, meta, state, legacy)
 	return sn, err == nil, err
+}
+
+func (b *Backend) readOptional(at plumbing.Hash, p string) ([]byte, error) {
+	data, err := b.repo.ReadFileAt(at, p)
+	if errors.Is(err, gitstore.ErrNotFound) {
+		return nil, nil
+	}
+	return data, err
 }
 
 // Save commits each board, one commit per board.

@@ -29,7 +29,10 @@ type Server struct {
 
 	identity      IdentityFunc
 	backendStatus BackendStatus
-	editors       editors
+	// auth and access are the hosted mode (nil locally): see EnableOAuth.
+	auth    *authManager
+	access  *forgeAccess
+	editors editors
 
 	statusMu   sync.Mutex
 	statusSubs map[chan struct{}]struct{}
@@ -49,6 +52,12 @@ func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logge
 		}
 		if _, err := store.Get(id); err != nil {
 			return websocket.ConnectionConfig{}, false
+		}
+		// The hosted gate has already refused a visitor without access; one
+		// who may only read gets a socket whose writes ygo drops, and is
+		// no editor of the board's commits.
+		if accessFrom(r.Context()) != AccessWrite {
+			return websocket.ConnectionConfig{ReadOnly: true}, true
 		}
 		if s.identity != nil {
 			if who, ok := s.identity(r); ok {
@@ -76,6 +85,14 @@ func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logge
 // Handler returns the HTTP handler.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	if s.auth != nil {
+		mux.HandleFunc("GET /auth/login", s.auth.handleLogin)
+		mux.HandleFunc("GET /auth/callback", s.auth.handleCallback)
+		mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
+	}
 	mux.HandleFunc("GET /api/v1/me", s.me)
 	mux.HandleFunc("GET /api/v1/status", s.getStatus)
 	mux.HandleFunc("GET /api/v1/status/events", s.statusEvents)
@@ -90,7 +107,7 @@ func (s *Server) Handler() http.Handler {
 		writeError(w, http.StatusNotFound, "not found")
 	})
 	mux.Handle("/", spaHandler(s.spa))
-	return mux
+	return s.gate(mux)
 }
 
 // Shutdown flushes every room's pending (coalesced) updates to the store.

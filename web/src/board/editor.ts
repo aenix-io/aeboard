@@ -47,9 +47,20 @@ export interface User {
   name: string;
 }
 
+export interface OpenOptions {
+  /** A visitor who may only look: the editor takes no input (the server
+   *  also drops whatever a read-only socket sends). */
+  readonly?: boolean;
+}
+
 // openBoard connects to the board's room, waits for the first sync and mounts
 // the editor into `mount`.
-export async function openBoard(boardId: string, user: User, mount: HTMLElement): Promise<BoardSession> {
+export async function openBoard(
+  boardId: string,
+  user: User,
+  mount: HTMLElement,
+  opts: OpenOptions = {},
+): Promise<BoardSession> {
   defineElements();
   const doc = new Y.Doc({ guid: boardId });
   const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/v1/sync`;
@@ -89,6 +100,7 @@ export async function openBoard(boardId: string, user: User, mount: HTMLElement)
     throw new Error('the board has no root block (was it created through the server?)');
   }
   store.resetHistory();
+  if (opts.readonly) store.readonly = true;
 
   const editor = new TestAffineEditorContainer();
   editor.doc = store;

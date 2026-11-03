@@ -18,10 +18,12 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
 	"github.com/aenix-io/aeboard/internal/blobs"
 	"github.com/aenix-io/aeboard/internal/boards"
+	"github.com/aenix-io/aeboard/internal/forge"
 	"github.com/aenix-io/aeboard/internal/ghcli"
 	"github.com/aenix-io/aeboard/internal/gitbackend"
 	"github.com/aenix-io/aeboard/internal/gitstore"
@@ -79,11 +81,16 @@ func runServe(args []string) error {
 		"git repository the boards live in: a local path or an https URL (empty: plain files under --data)")
 	branch := fl.String("branch", envOr("AEBOARD_BRANCH", "main"), "branch of --repo the boards live on")
 	fetchEvery := fl.Duration("fetch-interval", 30*time.Second, "how often --repo is checked for others' changes")
+	var hosted hostedFlags
+	hosted.register(fl)
 	debug := fl.Bool("debug", false, "debug logging")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
-	var err error
+	oauth, err := hosted.oauth(*repoFlag, *data)
+	if err != nil {
+		return err
+	}
 	level := slog.LevelInfo
 	if *debug {
 		level = slog.LevelDebug
@@ -96,7 +103,7 @@ func runServe(args []string) error {
 	var backend boards.Backend = boards.DirBackend{Root: *data}
 	var gb *gitbackend.Backend
 	if *repoFlag != "" {
-		gb, err = openGit(ctx, *repoFlag, *branch, *data, *fetchEvery, log)
+		gb, err = openGit(ctx, gitConfig{repo: *repoFlag, branch: *branch, data: *data, fetchEvery: *fetchEvery}, log)
 		if err != nil {
 			return err
 		}
@@ -115,7 +122,7 @@ func runServe(args []string) error {
 		return err
 	}
 	srv := server.New(store, blobStore, dist, log)
-	if err := setIdentity(srv, *identity, log); err != nil {
+	if err := setIdentity(srv, oauth, *identity, log); err != nil {
 		return err
 	}
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
@@ -162,9 +169,21 @@ func runServe(args []string) error {
 	return nil
 }
 
-// setIdentity attributes requests: "gh" acts as the local gh account, like
-// `aeman serve`; "none" leaves everyone anonymous.
-func setIdentity(srv *server.Server, mode string, log *slog.Logger) error {
+// setIdentity attributes requests. Hosted, every visitor signs in and
+// --identity does not apply. Locally, "gh" acts as the local gh account,
+// like `aeman serve`; "none" leaves everyone anonymous.
+func setIdentity(srv *server.Server, oauth *server.OAuthConfig, mode string, log *slog.Logger) error {
+	if oauth != nil {
+		f, err := forge.ForRepo(oauth.Repo)
+		if err != nil {
+			return err
+		}
+		if err := srv.EnableOAuth(*oauth, f); err != nil {
+			return err
+		}
+		log.Info("hosted mode", "base", oauth.BaseURL, "forge", f.Label(), "sessions", sessionsNote(*oauth))
+		return nil
+	}
 	switch mode {
 	case "gh":
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -227,37 +246,65 @@ func startGitSync(gb *gitbackend.Backend, store *boards.Store, srv *server.Serve
 	return cancel, ch
 }
 
+// gitConfig is where the boards live in git and how the server reaches it.
+type gitConfig struct {
+	repo, branch, data string
+	fetchEvery         time.Duration
+}
+
 // openGit opens (or clones) the board repository into <data>/repo.git.
-func openGit(ctx context.Context, repo, branch, data string, fetchEvery time.Duration, log *slog.Logger) (*gitbackend.Backend, error) {
-	remote := gitstore.Remote{URL: repo}
+func openGit(ctx context.Context, cfg gitConfig, log *slog.Logger) (*gitbackend.Backend, error) {
+	remote := gitstore.Remote{URL: cfg.repo}
 	switch {
-	case strings.HasPrefix(repo, "https://") || strings.HasPrefix(repo, "http://"):
-		tok := os.Getenv("AEBOARD_GIT_TOKEN")
-		if tok == "" {
-			var err error
-			if tok, err = ghcli.NewTokenSource().Token(ctx); err != nil {
-				return nil, fmt.Errorf("--repo %s needs a token: set AEBOARD_GIT_TOKEN or log in with gh: %w", repo, err)
-			}
+	case strings.HasPrefix(cfg.repo, "https://") || strings.HasPrefix(cfg.repo, "http://"):
+		auth, err := httpsAuth(ctx, cfg)
+		if err != nil {
+			return nil, err
 		}
-		remote.Auth = &githttp.BasicAuth{Username: "x-access-token", Password: tok}
-	case strings.Contains(repo, "://") || strings.HasPrefix(repo, "git@"):
+		remote.Auth = auth
+	case strings.Contains(cfg.repo, "://") || strings.HasPrefix(cfg.repo, "git@"):
 		// ssh and other transports: go-git's defaults (ssh-agent).
 	default:
-		abs, err := filepath.Abs(repo)
+		abs, err := filepath.Abs(cfg.repo)
 		if err != nil {
 			return nil, err
 		}
 		remote.URL = "file://" + abs
 	}
-	r, created, err := gitstore.OpenDir(ctx, filepath.Join(data, "repo.git"), remote, gitstore.Options{
+	r, created, err := gitstore.OpenDir(ctx, filepath.Join(cfg.data, "repo.git"), remote, gitstore.Options{
 		Committer: gitstore.Identity{Name: "aeboard", Email: "aeboard@users.noreply.github.com"},
-		Branch:    plumbing.NewBranchReferenceName(branch),
+		Branch:    plumbing.NewBranchReferenceName(cfg.branch),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("open board repository %s: %w", repo, err)
+		return nil, fmt.Errorf("open board repository %s: %w", cfg.repo, err)
 	}
-	log.Info("board repository", "repo", repo, "branch", branch, "new", created)
-	return gitbackend.New(r, &remote, gitbackend.Options{Log: log, FetchInterval: fetchEvery}), nil
+	log.Info("board repository", "repo", cfg.repo, "branch", cfg.branch, "new", created)
+	return gitbackend.New(r, &remote, gitbackend.Options{Log: log, FetchInterval: cfg.fetchEvery}), nil
+}
+
+// httpsAuth is the credential for an https remote: the GitHub App's
+// installation token (minted per request, renewed before its hour is up),
+// else AEBOARD_GIT_TOKEN, else the gh CLI's token.
+func httpsAuth(ctx context.Context, cfg gitConfig) (transport.AuthMethod, error) {
+	app, err := githubApp()
+	if err != nil {
+		return nil, err
+	}
+	if app != nil {
+		// Mint once now: an app not installed on the repository is a
+		// startup error with the install link, not a bare 401 on clone.
+		if _, err := app.Token(ctx, cfg.repo); err != nil {
+			return nil, err
+		}
+		return app.GitAuthFor(cfg.repo), nil
+	}
+	tok := os.Getenv("AEBOARD_GIT_TOKEN")
+	if tok == "" {
+		if tok, err = ghcli.NewTokenSource().Token(ctx); err != nil {
+			return nil, fmt.Errorf("--repo %s needs a credential: set AEBOARD_GITHUB_APP_ID and AEBOARD_GITHUB_APP_KEY, AEBOARD_GIT_TOKEN, or log in with gh: %w", cfg.repo, err)
+		}
+	}
+	return &githttp.BasicAuth{Username: "x-access-token", Password: tok}, nil
 }
 
 func envOr(key, def string) string {

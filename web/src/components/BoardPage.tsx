@@ -7,11 +7,14 @@ import { TagEditor } from './TagEditor';
 interface Props {
   id: string;
   userName: string;
+  /** False for a visitor with read access: title, tags and the board itself
+   *  are shown, not edited (the server drops their writes anyway). */
+  canWrite: boolean;
   whoami: ReactNode;
 }
 
 /** BoardPage is one board: a slim header (title, tags) over the editor. */
-export function BoardPage({ id, userName, whoami }: Props) {
+export function BoardPage({ id, userName, canWrite, whoami }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [known, setKnown] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +46,7 @@ export function BoardPage({ id, userName, whoami }: Props) {
     let cancelled = false;
     const el = mount.current;
     import('../board/editor')
-      .then(({ openBoard }) => openBoard(id, { name: userName }, el))
+      .then(({ openBoard }) => openBoard(id, { name: userName }, el, { readonly: !canWrite }))
       .then(s => {
         if (cancelled) s.destroy();
         else {
@@ -58,7 +61,7 @@ export function BoardPage({ id, userName, whoami }: Props) {
     };
     // Reconnect only when the board changes; a rename must not remount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board?.id, userName]);
+  }, [board?.id, userName, canWrite]);
 
   const save = async (patch: { title?: string; tags?: string[] }) => {
     try {
@@ -95,7 +98,13 @@ export function BoardPage({ id, userName, whoami }: Props) {
         >
           ← Boards
         </a>
-        {board && (
+        {board && !canWrite && (
+          <>
+            <h1 className="title-input title-static">{board.title}</h1>
+            <TagEditor tags={board.tags} readOnly onChange={() => {}} />
+          </>
+        )}
+        {board && canWrite && (
           <>
             <input
               className="title-input"

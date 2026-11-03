@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -398,5 +401,43 @@ func TestValidID(t *testing.T) {
 		if ValidID(bad) {
 			t.Errorf("ValidID(%q) = true", bad)
 		}
+	}
+}
+
+// Boards first stored a binary state.bin. Such a board still loads, and its
+// next write replaces the binary with the text state.
+func TestLegacyBinaryStateIsReadThenReplacedByText(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, DirBackend{Root: dir})
+	m, _ := s.Create("old", nil, "")
+	st, _ := s.LoadState(m.ID)
+	st, _ = MergeStates(st, editOf(t, st, 9, "kept", "v"))
+	board := filepath.Join(dir, BoardPath(m.ID))
+	meta, _ := json.Marshal(m)
+	if err := os.MkdirAll(board, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(board, "board.json"), meta, 0o600)
+	_ = os.WriteFile(filepath.Join(board, "state.bin"), st, 0o600)
+
+	re := open(t, DirBackend{Root: dir})
+	got, _ := re.LoadState(m.ID)
+	if !slices.Contains(blockKeys(t, got), "kept") {
+		t.Fatalf("legacy state not loaded")
+	}
+	_, _ = re.Update(m.ID, Patch{}, "")
+	if err := re.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(board, "state.bin")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("state.bin still there: %v", err)
+	}
+	text, err := os.ReadFile(filepath.Join(board, "state.jsonl"))
+	if err != nil || !strings.HasPrefix(string(text), `{"format":"aeboard-yjs-v1"}`) {
+		t.Fatalf("state.jsonl = %.80q, %v", text, err)
+	}
+	again, _ := open(t, DirBackend{Root: dir}).LoadState(m.ID)
+	if !slices.Contains(blockKeys(t, again), "kept") {
+		t.Fatalf("text state lost the edit")
 	}
 }
