@@ -47,7 +47,7 @@ boards/<id>/doc.json     the "blocks" map as sorted, indented JSON — for peopl
 
 **Write-behind.** ygo already folds a burst of updates into one `StoreUpdate`. On top of that, `boards.Store` answers from memory and only marks a board dirty. Its flusher writes a board once nobody has changed it for 5s, at the latest 60s after its oldest unwritten change, when the last participant leaves the room, and on shutdown. Each write is one commit per board, authored by the people who were in the room. An edit that lands while its board is being written keeps the board dirty for the next write. An update the state already contains, such as a reconnecting peer re-sending, is not a change.
 
-**Attachments** (images, stickers, files) are not part of the Yjs state; the doc only holds their key. They go to `blobs.Store` under `--data/blobs`: content-addressed by SHA-256 (BlockSuite's own key), with the hash checked on upload, one copy per content, never deleted by a client. The HTTP route is per board (`/api/v1/boards/<id>/blobs/<key>`), so access can follow the board's rights later. Today the store is local to one server. A shared store (S3-compatible, or a separate git LFS-style repository) is the open item for running several servers.
+**Attachments** (images, stickers, files) are not part of the Yjs state; the doc only holds their key. They go to `blobs.Store` under `--data/blobs`: content-addressed by SHA-256 (BlockSuite's own key), with the hash checked on upload, one copy per content, never deleted by a client. The HTTP route is per board (`/api/v1/boards/<id>/blobs/<key>`), so access follows the board's rights. Today the store is local to one server. A shared store (S3-compatible, or a separate git LFS-style repository) is the open item for running several servers.
 
 ## Git sync
 
@@ -64,11 +64,17 @@ The header badge shows the number of boards with uncommitted changes plus the nu
 ## Identity and rights
 
 - **Local mode** (`aeboard serve`) acts as the account the `gh` CLI is logged in as, like `aeman serve`. That login is on the cursor and authors the commits, and `gh`'s token pushes to an https remote.
-- **Hosted mode** (to do) is the aeman pattern: GitHub OAuth sessions behind a forge abstraction, so GitLab can follow. Board rights come from the visitor's rights on the board repository: read gives read-only rooms (ygo's `Authorize` already supports read-only connections), write gives editing.
+- **Hosted mode** turns on when a GitHub client id and secret are set. It is aeman's sign-in, ported (`internal/server/auth.go`, `sessioncrypt.go`, `access.go`, `internal/forge`) without aeman's MCP authorization server:
+  - `/auth/login` sends the visitor to GitHub with a random state bound to the browser by an HttpOnly, SameSite=Lax cookie (Secure behind https); `/auth/callback` refuses a state that is not this browser's, trades the code for the visitor's token and opens a 14-day session; `POST /auth/logout` ends it. A GitHub App's user token expires after 8 hours and is renewed ahead of time with its single-use refresh token, one renewal per session at a time.
+  - Sessions are kept in memory and, with `AEBOARD_SESSION_KEY`, in a file sealed with AES-256-GCM. Without the key nothing is written; with a wrong key the file is ignored and everyone signs in again.
+  - Rights come from the visitor's permission on the board repository, asked as the visitor (`GET /repos/{owner}/{repo}`) and cached per login for a minute; a stale answer is served while it is re-asked in the background, and stands while GitHub is unreachable. A token GitHub refuses is renewed once, then the session is dropped (401). One gate in front of `/api/v1` applies the answer: no session is 401, no access is 403, read access refuses every write with 403 and gets a read-only sync socket (ygo's `ConnectionConfig.ReadOnly`, which drops the peer's updates and awareness). Writes must also come from the public origin. `/api/v1/me` reports the identity and the access, so the SPA shows the sign-in, a "no access" page, or a view-only board.
+  - The session is the request's identity: the login on the cursor, the room's editors and the commit author. Read-only visitors are never named as editors.
+  - The server's own git pushes use the same GitHub App's installation token, minted per request and renewed five minutes before it expires; `AEBOARD_GIT_TOKEN` and `gh` remain the fallbacks.
+  - Rights are checked when a socket opens. A visitor demoted while connected keeps their socket until it reconnects.
+  - The `forge.Forge` interface keeps GitLab possible; only GitHub is implemented.
 
 ## Not done yet
 
-- Hosted mode: OAuth, sessions, per-visitor rights. The REST API and sync socket are unauthenticated beyond the local identity, so serve only on localhost for now.
 - A shared attachment store for several servers.
 - Deleting boards. The git merge treats a board missing on one side as "only the other side has it".
 - History and restore, built from the per-board commits.
