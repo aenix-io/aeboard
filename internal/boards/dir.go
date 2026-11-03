@@ -31,11 +31,15 @@ func (d DirBackend) Load(context.Context) ([]Snapshot, error) {
 		if err != nil {
 			return nil, err
 		}
-		state, err := os.ReadFile(filepath.Join(d.Root, StatePath(id)))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		state, err := readOptional(filepath.Join(d.Root, StatePath(id)))
+		if err != nil {
 			return nil, err
 		}
-		sn, err := Decode(id, meta, state)
+		legacy, err := readOptional(filepath.Join(d.Root, LegacyStatePath(id)))
+		if err != nil {
+			return nil, err
+		}
+		sn, err := Decode(id, meta, state, legacy)
 		if err != nil {
 			return nil, err
 		}
@@ -52,6 +56,12 @@ func (d DirBackend) Save(_ context.Context, boards []Snapshot) error {
 			return err
 		}
 		for _, f := range files {
+			if f.Data == nil {
+				if err := os.Remove(filepath.Join(d.Root, filepath.FromSlash(f.Path))); err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+				continue
+			}
 			if err := writeAtomic(filepath.Join(d.Root, filepath.FromSlash(f.Path)), f.Data); err != nil {
 				return err
 			}
@@ -69,4 +79,12 @@ func writeAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func readOptional(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return b, err
 }

@@ -41,9 +41,11 @@ Each board is a directory, identical in the plain-file and the git backend:
 
 ```
 boards/<id>/board.json   title, tags, created/updated
-boards/<id>/state.bin    Yjs V1 state — the source of truth
+boards/<id>/state.jsonl  the Yjs state as text — the source of truth
 boards/<id>/doc.json     the "blocks" map as sorted, indented JSON — for people and diffs, never read back
 ```
+
+**Why the state is a Yjs log, not just JSON.** Yjs tells edits apart by their item ids (client, clock) and the neighbours each item was inserted between; that is what lets a reconnecting browser re-send its state, or two replicas merge, without duplicating anything. A board rebuilt from plain JSON would get fresh ids every time. So the source of truth keeps the ids — but as text, not binary: `internal/ytext` writes the Yjs V1 update as JSON lines, one per item (`{"id":[client,clock],"left":…,"parent":…,"key":…,"string":"…"}`) and one per client of deleted ranges, and reads it back to the identical bytes (values keep their wire type, objects their key order). Every write checks that round trip before anything is stored. The text is about three times the binary size; git compresses it, and the diffs show which items a commit added or deleted. Boards stored before this as `state.bin` are still read and converted by their next write.
 
 **Write-behind.** ygo already folds a burst of updates into one `StoreUpdate`. On top of that, `boards.Store` answers from memory and only marks a board dirty. Its flusher writes a board once nobody has changed it for 5s, at the latest 60s after its oldest unwritten change, when the last participant leaves the room, and on shutdown. Each write is one commit per board, authored by the people who were in the room. An edit that lands while its board is being written keeps the board dirty for the next write. An update the state already contains, such as a reconnecting peer re-sending, is not a change.
 

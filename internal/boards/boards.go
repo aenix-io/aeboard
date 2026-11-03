@@ -4,7 +4,7 @@
 // Every board is a directory in the backend:
 //
 //	boards/<id>/board.json   metadata (title, tags, timestamps)
-//	boards/<id>/state.bin    the Yjs V1 state — the source of truth
+//	boards/<id>/state.jsonl  the Yjs state as text (package ytext) — the source of truth
 //	boards/<id>/doc.json     the same document as JSON, for reading and diffs
 //
 // Edits are answered from memory at once and only marked dirty. A flush
