@@ -1,0 +1,32 @@
+{
+  "name": "aeboard-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@blocksuite/affine": "0.22.4",
+    "@blocksuite/integration-test": "0.22.4",
+    "@toeverything/theme": "^1.1.23",
+    "change-case": "^4.1.2",
+    "react": "^18.3.1",
+    "y-protocols": "1.0.6",
+    "y-websocket": "3.0.0",
+    "yjs": "13.6.30"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.20.5",
+    "@vanilla-extract/vite-plugin": "^5.0.0",
+    "rxjs": "^7.8.2",
+    "typescript": "^5.8.3",
+    "vite": "^6.1.0",
+    "vite-node": "^3.2.4",
+    "vitest": "^3.1.3"
+  }
+}

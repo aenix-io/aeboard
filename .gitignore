@@ -1,0 +1,32 @@
+# Binaries
+/aeboard
+/bin/
+
+# Go
+*.test
+*.out
+coverage.*
+
+# Node / frontend
+node_modules/
+web/.vite/
+web/*.tsbuildinfo
+web/test-results/
+web/playwright-report/
+
+# Embedded build output: keep web/dist/.gitkeep so go:embed always has a file.
+web/dist/*
+!web/dist/.gitkeep
+
+# Local data
+/data/
+.env
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Claude Code
+.claude/
