@@ -12,6 +12,7 @@ import { WebsocketProvider } from 'y-websocket';
 import * as Y from 'yjs';
 
 import { ServerBlobSource } from './blobs';
+import { registerTemplates } from './templates';
 import { BoardWorkspace } from './workspace';
 
 // A board is always edgeless. BlockSuite's default DocModeProvider answers
@@ -31,6 +32,7 @@ let defined = false;
 function defineElements() {
   if (defined) return;
   defined = true;
+  registerTemplates();
   customElements.define('affine-editor-container', TestAffineEditorContainer);
 }
 

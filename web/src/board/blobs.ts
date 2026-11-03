@@ -17,7 +17,9 @@ export class ServerBlobSource implements BlobSource {
   async get(key: string): Promise<Blob | null> {
     const hit = this.cache.get(key);
     if (hit) return hit;
-    const resp = await fetch(this.url(key));
+    // Board templates reference their images by a static path
+    // (/static/templates/…) rather than a content key; those are app assets.
+    const resp = await fetch(key.startsWith('/') ? key : this.url(key));
     if (resp.status === 404) return null;
     if (!resp.ok) throw new Error(`attachment ${key}: ${resp.status}`);
     const blob = await resp.blob();
