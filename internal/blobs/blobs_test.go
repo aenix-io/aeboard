@@ -2,6 +2,7 @@ package blobs
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -37,10 +38,10 @@ func TestPutThenOpenKeepsContentAndType(t *testing.T) {
 // uploads from anyone who can edit, and to keep one copy across boards.
 func TestPutRejectsContentThatDoesNotHashToKey(t *testing.T) {
 	s, _ := Open(t.TempDir())
-	if err := s.Put(Key([]byte("a")), "", strings.NewReader("b")); err != ErrHashMismatch {
+	if err := s.Put(Key([]byte("a")), "", strings.NewReader("b")); !errors.Is(err, ErrHashMismatch) {
 		t.Fatalf("err = %v", err)
 	}
-	if _, _, err := s.Open(Key([]byte("a"))); err != ErrNotFound {
+	if _, _, err := s.Open(Key([]byte("a"))); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("mismatched content was stored: %v", err)
 	}
 }
@@ -65,11 +66,11 @@ func TestInvalidKeysNeverTouchTheDisk(t *testing.T) {
 		if ValidKey(k) && k != strings.Repeat("A", 43)+"=" {
 			t.Errorf("ValidKey(%q) = true", k)
 		}
-		if _, _, err := s.Open("../" + k); err != ErrNotFound {
+		if _, _, err := s.Open("../" + k); !errors.Is(err, ErrNotFound) {
 			t.Errorf("Open(../%s) = %v", k, err)
 		}
 	}
-	if err := s.Put("../x", "", strings.NewReader("")); err != ErrHashMismatch {
+	if err := s.Put("../x", "", strings.NewReader("")); !errors.Is(err, ErrHashMismatch) {
 		t.Fatalf("Put(../x) = %v", err)
 	}
 }
@@ -77,7 +78,7 @@ func TestInvalidKeysNeverTouchTheDisk(t *testing.T) {
 func TestTooLarge(t *testing.T) {
 	s, _ := Open(t.TempDir())
 	big := bytes.Repeat([]byte{0}, MaxSize+1)
-	if err := s.Put(Key(big), "", bytes.NewReader(big)); err != ErrTooLarge {
+	if err := s.Put(Key(big), "", bytes.NewReader(big)); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -109,8 +109,12 @@ func TestBlobRoundTripAndHashCheck(t *testing.T) {
 	req, _ := http.NewRequest("PUT", url, strings.NewReader(svg))
 	req.Header.Set("Content-Type", "image/svg+xml")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("put: %v %v", err, resp.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("put: %v", resp.Status)
 	}
 	resp, _ = http.Get(url)
 	got, _ := io.ReadAll(resp.Body)

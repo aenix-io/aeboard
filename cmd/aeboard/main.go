@@ -115,61 +115,13 @@ func runServe(args []string) error {
 		return err
 	}
 	srv := server.New(store, blobStore, dist, log)
-	switch *identity {
-	case "gh":
-		// Like `aeman serve`: a local server acts as the gh account.
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		u, err := ghcli.CurrentUser(ctx)
-		cancel()
-		if err != nil {
-			log.Warn("no gh identity, editing anonymously (run `gh auth login`, or pass --identity none)", "err", err)
-			break
-		}
-		log.Info("identity from gh", "login", u.Login)
-		srv.SetIdentity(server.StaticIdentity(server.Identity{
-			Login: u.Login, Name: u.Name, AvatarURL: server.GitHubAvatarURL(u.Login),
-		}))
-	case "none":
-	default:
-		return fmt.Errorf("--identity: want gh or none, got %q", *identity)
+	if err := setIdentity(srv, *identity, log); err != nil {
+		return err
 	}
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	syncCtx, stopSync := context.WithCancel(context.Background())
+	stopSync, syncDone := startGitSync(gb, store, srv, *repoFlag, log)
 	defer stopSync()
-	syncDone := make(chan struct{})
-	if gb != nil {
-		gb.OnStatus = srv.NotifyStatus
-		gb.OnRemote = func(ctx context.Context, remotes []boards.Remote) {
-			gained, err := store.MergeRemote(remotes)
-			if err != nil {
-				log.Error("merge remote boards", "err", err)
-			}
-			srv.ApplyRemote(ctx, gained)
-			srv.NotifyStatus()
-		}
-		remote := *repoFlag
-		srv.SetBackendStatus(func() server.SyncStatus {
-			st := gb.Status()
-			out := server.SyncStatus{Backend: "git", Remote: remote, Unpushed: st.Unpushed}
-			if !st.LastSync.IsZero() {
-				out.LastSync = &st.LastSync
-			}
-			if !st.UnpushedSince.IsZero() {
-				out.UnpushedSince = &st.UnpushedSince
-			}
-			if st.Err != nil {
-				out.Error = st.Err.Error()
-			}
-			return out
-		})
-		go func() {
-			defer close(syncDone)
-			gb.Run(syncCtx, 30*time.Second)
-		}()
-	} else {
-		close(syncDone)
-	}
 
 	flushCtx, stopFlusher := context.WithCancel(context.Background())
 	defer stopFlusher()
@@ -208,6 +160,71 @@ func runServe(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// setIdentity attributes requests: "gh" acts as the local gh account, like
+// `aeman serve`; "none" leaves everyone anonymous.
+func setIdentity(srv *server.Server, mode string, log *slog.Logger) error {
+	switch mode {
+	case "gh":
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		u, err := ghcli.CurrentUser(ctx)
+		cancel()
+		if err != nil {
+			log.Warn("no gh identity, editing anonymously (run `gh auth login`, or pass --identity none)", "err", err)
+			return nil
+		}
+		log.Info("identity from gh", "login", u.Login)
+		srv.SetIdentity(server.StaticIdentity(server.Identity{
+			Login: u.Login, Name: u.Name, AvatarURL: server.GitHubAvatarURL(u.Login),
+		}))
+		return nil
+	case "none":
+		return nil
+	default:
+		return fmt.Errorf("--identity: want gh or none, got %q", mode)
+	}
+}
+
+// startGitSync runs the git backend's sync loop (nothing for the dir
+// backend): fetched boards are merged into the store and its open rooms,
+// and the sync status feeds the header badge. stop ends the loop with one
+// last push; done closes when it has.
+func startGitSync(gb *gitbackend.Backend, store *boards.Store, srv *server.Server, remote string, log *slog.Logger) (stop func(), done <-chan struct{}) {
+	ch := make(chan struct{})
+	if gb == nil {
+		close(ch)
+		return func() {}, ch
+	}
+	gb.OnStatus = srv.NotifyStatus
+	gb.OnRemote = func(ctx context.Context, remotes []boards.Remote) {
+		gained, err := store.MergeRemote(remotes)
+		if err != nil {
+			log.Error("merge remote boards", "err", err)
+		}
+		srv.ApplyRemote(ctx, gained)
+		srv.NotifyStatus()
+	}
+	srv.SetBackendStatus(func() server.SyncStatus {
+		st := gb.Status()
+		out := server.SyncStatus{Backend: "git", Remote: remote, Unpushed: st.Unpushed}
+		if !st.LastSync.IsZero() {
+			out.LastSync = &st.LastSync
+		}
+		if !st.UnpushedSince.IsZero() {
+			out.UnpushedSince = &st.UnpushedSince
+		}
+		if st.Err != nil {
+			out.Error = st.Err.Error()
+		}
+		return out
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		defer close(ch)
+		gb.Run(ctx, 30*time.Second)
+	}()
+	return cancel, ch
 }
 
 // openGit opens (or clones) the board repository into <data>/repo.git.

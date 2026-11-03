@@ -59,9 +59,9 @@ func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logge
 	}
 	// The last participant left and ygo has flushed the room's pending
 	// updates: write the board now rather than at the next quiet tick.
-	s.sync.OnUnloadDocument = func(_ context.Context, room string) {
+	s.sync.OnUnloadDocument = func(hookCtx context.Context, room string) {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(hookCtx), time.Minute)
 			defer cancel()
 			if err := store.Flush(ctx, room); err != nil {
 				s.log.Error("flush board on unload", "board", room, "err", err)

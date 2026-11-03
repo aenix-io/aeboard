@@ -3,6 +3,7 @@ package boards
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -368,13 +369,13 @@ func TestListNewestFirstAndTagsUnion(t *testing.T) {
 
 func TestUnknownBoard(t *testing.T) {
 	s := open(t, &countingBackend{})
-	if _, err := s.LoadState("0000000000"); err != ErrNotFound {
+	if _, err := s.LoadState("0000000000"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("LoadState: %v", err)
 	}
-	if _, err := s.ApplyUpdate("0000000000", nil); err != ErrNotFound {
+	if _, err := s.ApplyUpdate("0000000000", nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ApplyUpdate: %v", err)
 	}
-	if _, err := s.Update("0000000000", Patch{}, ""); err != ErrNotFound {
+	if _, err := s.Update("0000000000", Patch{}, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Update: %v", err)
 	}
 }
