@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -125,6 +126,7 @@ func runServe(args []string) error {
 	if err := setIdentity(srv, oauth, *identity, log); err != nil {
 		return err
 	}
+	srv.SetMCPInfo(server.MCPInfo{Version: version, BaseURL: publicURL(oauth, *addr)})
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	httpSrv.RegisterOnShutdown(srv.CloseStreams)
 
@@ -144,7 +146,7 @@ func runServe(args []string) error {
 
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", "http://"+*addr, "data", *data, "version", version)
+		log.Info("listening", "addr", "http://"+*addr, "mcp", publicURL(oauth, *addr)+"/mcp", "data", *data, "version", version)
 		errc <- httpSrv.ListenAndServe()
 	}()
 	select {
@@ -204,6 +206,22 @@ func setIdentity(srv *server.Server, oauth *server.OAuthConfig, mode string, log
 	default:
 		return fmt.Errorf("--identity: want gh or none, got %q", mode)
 	}
+}
+
+// publicURL is where people reach the server: the hosted base URL, or the
+// listen address (an unspecified host is this machine).
+func publicURL(oauth *server.OAuthConfig, addr string) string {
+	if oauth != nil {
+		return oauth.BaseURL
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if ip := net.ParseIP(host); host == "" || (ip != nil && ip.IsUnspecified()) {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 // startGitSync runs the git backend's sync loop (nothing for the dir

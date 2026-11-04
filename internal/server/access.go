@@ -161,26 +161,41 @@ func (f *forgeAccess) probe(ctx context.Context, token, login string) (Access, e
 	return a, nil
 }
 
-// visitorAccess resolves a signed-in visitor's right. A token the forge
+// errSignedOut is a session the forge no longer accepts: its token was
+// refused, renewed and refused again, and the session is gone.
+var errSignedOut = errors.New("the sign-in is no longer valid")
+
+// sessionAccess resolves the right of session sid. A token the forge
 // refuses is renewed once (the refresh token may still buy a fresh one);
-// if that fails too, the session is dropped and the visitor is signed out.
-// ok=false means the answer was already written.
-func (s *Server) visitorAccess(w http.ResponseWriter, r *http.Request, sess oauthSession) (Access, bool) {
-	acc, err := s.access.rights(r.Context(), sess.token, sess.login)
+// if that fails too, the session is dropped and the answer is errSignedOut.
+// The browser (visitorAccess) and /mcp (mcpAccess) both decide through it.
+func (s *Server) sessionAccess(ctx context.Context, sid string, sess oauthSession) (Access, error) {
+	acc, err := s.access.rights(ctx, sess.token, sess.login)
 	if errors.Is(err, forge.ErrBadToken) {
-		if renewed, ok := s.auth.renewNow(r.Context(), s.auth.sessionID(r)); ok {
-			acc, err = s.access.rights(r.Context(), renewed.token, sess.login)
+		if renewed, ok := s.auth.renewNow(ctx, sid); ok {
+			acc, err = s.access.rights(ctx, renewed.token, sess.login)
 			s.log.Info("session token renewed after the forge refused it", "login", sess.login)
 		}
 	}
+	if errors.Is(err, forge.ErrBadToken) {
+		s.access.forget(sess.login)
+		if dropped := s.auth.dropSession(sid); dropped != "" {
+			s.log.Warn("the forge rejected a session token; session dropped", "login", dropped)
+		}
+		return AccessNone, errSignedOut
+	}
+	return acc, err
+}
+
+// visitorAccess resolves a signed-in visitor's right (see sessionAccess); a
+// dropped session signs the browser out. ok=false means the answer was
+// already written.
+func (s *Server) visitorAccess(w http.ResponseWriter, r *http.Request, sess oauthSession) (Access, bool) {
+	acc, err := s.sessionAccess(r.Context(), s.auth.sessionID(r), sess)
 	if err == nil {
 		return acc, true
 	}
-	if errors.Is(err, forge.ErrBadToken) {
-		s.access.forget(sess.login)
-		if dropped := s.auth.dropSession(s.auth.sessionID(r)); dropped != "" {
-			s.log.Warn("the forge rejected a session token; session dropped", "login", dropped)
-		}
+	if errors.Is(err, errSignedOut) {
 		s.auth.setCookie(w, sessionCookie, "", -1)
 		s.writeSignedOut(w, "your sign-in is no longer valid")
 		return AccessNone, false
@@ -194,6 +209,10 @@ func (s *Server) visitorAccess(w http.ResponseWriter, r *http.Request, sess oaut
 // 401; without access to the board repository, 403; with read access, any
 // write is 403 (the sync socket goes read-only instead, in Authorize). /me
 // answers for itself, so the SPA can tell "sign in" from "no access".
+//
+// Only /api/v1 is the cookie's: the OAuth endpoints agents call (/oauth/*,
+// /.well-known/*) and /mcp, which takes a bearer token and no cookie, are
+// outside it, so neither the session nor the origin check applies to them.
 func (s *Server) gate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.auth == nil || !strings.HasPrefix(r.URL.Path, "/api/v1/") || r.URL.Path == "/api/v1/me" {

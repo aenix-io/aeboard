@@ -1,5 +1,5 @@
 // Package server is aenotes's HTTP surface: the board REST API, the Yjs sync
-// WebSocket (ygo) and the embedded SPA.
+// WebSocket (ygo), the MCP transport (/mcp) and the embedded SPA.
 package server
 
 import (
@@ -13,10 +13,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/reearth/ygo/provider/websocket"
 
 	"github.com/aenix-io/aenotes/internal/blobs"
 	"github.com/aenix-io/aenotes/internal/boards"
+	"github.com/aenix-io/aenotes/internal/mcpserver"
 )
 
 // Server wires the board store to HTTP.
@@ -33,6 +35,10 @@ type Server struct {
 	auth    *authManager
 	access  *forgeAccess
 	editors editors
+
+	mcpInfo MCPInfo
+	// newMCP builds the MCP tool set (mcpserver.New; a test swaps it).
+	newMCP func(mcpserver.Deps) *mcp.Server
 
 	statusMu   sync.Mutex
 	statusSubs map[chan struct{}]struct{}
@@ -95,6 +101,15 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /auth/login", s.auth.handleLogin)
 		mux.HandleFunc("GET /auth/callback", s.auth.handleCallback)
 		mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
+		s.registerOAuthServer(mux)
+	}
+	s.registerMCP(mux)
+	// Discovery a client probes for and this server does not offer is a
+	// 404, never the SPA's index.html (a 200 an OAuth client would parse).
+	for _, p := range []string{"/.well-known/", "/oauth/"} {
+		mux.HandleFunc(p, func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusNotFound, "not found")
+		})
 	}
 	mux.HandleFunc("GET /api/v1/me", s.me)
 	mux.HandleFunc("GET /api/v1/status", s.getStatus)
