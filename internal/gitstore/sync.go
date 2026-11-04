@@ -236,12 +236,27 @@ func (r *Repo) Push(ctx context.Context, remote Remote) error {
 		return errors.New("gitstore: nothing to push")
 	}
 	rem := git.NewRemote(r.s, &config.RemoteConfig{Name: remoteName, URLs: []string{remote.URL}})
-	err := rem.PushContext(ctx, &git.PushOptions{
-		Auth: remote.Auth,
-		// The hash, not the ref: a commit landing meanwhile is not sent
-		// under a tracking ref that claims otherwise.
-		RefSpecs: []config.RefSpec{config.RefSpec(head.String() + ":" + r.branch.String())},
-	})
+	push := func() error {
+		return rem.PushContext(ctx, &git.PushOptions{
+			Auth: remote.Auth,
+			// The hash, not the ref: a commit landing meanwhile is not sent
+			// under a tracking ref that claims otherwise.
+			RefSpecs: []config.RefSpec{config.RefSpec(head.String() + ":" + r.branch.String())},
+		})
+	}
+	err := push()
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) && !r.rejected(ctx, rem, remote, head) {
+		// go-git walks the history behind what it sends, and a shallow
+		// clone stops short of it once a merge commit joins our side to
+		// theirs ("object not found"). Fetch the rest of the history once —
+		// the clone is complete from then on — and try again.
+		if shallows, serr := r.s.Shallow(); serr == nil && len(shallows) > 0 {
+			if uerr := r.unshallowLocked(ctx, remote); uerr != nil {
+				return fmt.Errorf("gitstore: push: %w (and unshallowing failed: %w)", err, uerr)
+			}
+			err = push()
+		}
+	}
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		if r.rejected(ctx, rem, remote, head) {
 			return fmt.Errorf("%w: %w", ErrRejected, err)
@@ -249,6 +264,19 @@ func (r *Repo) Push(ctx context.Context, remote Remote) error {
 		return fmt.Errorf("gitstore: push: %w", err)
 	}
 	return r.s.SetReference(plumbing.NewHashReference(r.tracking(), head))
+}
+
+// unshallowLocked fetches the branch's whole history into a shallow clone
+// (syncMu held).
+func (r *Repo) unshallowLocked(ctx context.Context, remote Remote) error {
+	_, err := r.uploadPack(ctx, remote, func(req *packp.UploadPackRequest, _ plumbing.Hash, caps *capability.List) bool {
+		if !caps.Supports(capability.Shallow) {
+			return false
+		}
+		req.Depth = packp.DepthCommits(1 << 30)
+		return true
+	})
+	return err
 }
 
 // rejected reports whether the remote's branch holds a commit head does
