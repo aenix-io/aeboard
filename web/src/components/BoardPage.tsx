@@ -28,8 +28,7 @@ function viewFromURL(): View | undefined {
 
 /** DocPath is the header's way down to the document: the folders and
  *  documents above the row the visitor opened it from in the sidebar, or
- *  above its own place. Opened from a shortcut, it also offers the way to
- *  the original. */
+ *  above its own place. */
 function DocPath({ id }: { id: string }) {
   const cat = useCatalog();
   const trail = cat.trail?.doc === id ? cat.trail : null;
@@ -54,12 +53,28 @@ function DocPath({ id }: { id: string }) {
           <span className="crumb-sep"> / </span>
         </span>
       ))}
-      {trail?.shortcut && (
-        <a className="to-original" href={`/b/${id}`} onClick={open(id)} title="Show where this document lives">
-          ↗ Go to original
-        </a>
-      )}
     </nav>
+  );
+}
+
+/** ToOriginal is the button after the title of a document opened from a
+ *  shortcut: it shows the document where it lives. */
+function ToOriginal({ id }: { id: string }) {
+  const cat = useCatalog();
+  if (!(cat.trail?.doc === id && cat.trail.shortcut)) return null;
+  return (
+    <a
+      className="to-original"
+      href={`/b/${id}`}
+      title="Show where this document lives"
+      onClick={e => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        cat.setTrail(null);
+      }}
+    >
+      ↗ Go to original
+    </a>
   );
 }
 
@@ -195,6 +210,7 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
             />
           </>
         )}
+        {board && <ToOriginal id={id} />}
         {error && board && <span className="error">{error}</span>}
         <span className="spacer" />
         {board && (
