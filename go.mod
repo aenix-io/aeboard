@@ -1,4 +1,4 @@
-module github.com/aenix-io/aeboard
+module github.com/aenix-io/aenotes
 
 go 1.27.1
 

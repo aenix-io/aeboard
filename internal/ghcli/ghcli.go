@@ -78,7 +78,7 @@ func Login(ctx context.Context) (string, error) {
 }
 
 // Run executes `gh` with the given arguments and returns its stdout. The gh
-// binary name is fixed and arguments are supplied by aeboard itself, never by
+// binary name is fixed and arguments are supplied by aenotes itself, never by
 // untrusted input.
 func Run(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...) //nolint:gosec // fixed binary, internal args

@@ -89,7 +89,7 @@ func fakeAppAPI(t *testing.T, mints *atomic.Int32, expiry time.Duration) *httpte
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"slug": "aenix-aeboard", "html_url": "https://github.com/apps/aenix-aeboard"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"slug": "aenix-aenotes", "html_url": "https://github.com/apps/aenix-aenotes"})
 	})
 	mux.HandleFunc("GET /repos/", func(w http.ResponseWriter, r *http.Request) {
 		if err := checkJWT(r); err != nil {
@@ -161,7 +161,7 @@ func TestAppMintsInstallationTokensPerRepository(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("uninstalled repo: %v, want a 'not installed' error", err)
 	}
-	if !strings.Contains(err.Error(), "https://github.com/apps/aenix-aeboard/installations/new") {
+	if !strings.Contains(err.Error(), "https://github.com/apps/aenix-aenotes/installations/new") {
 		t.Fatalf("the refusal must carry the install link: %v", err)
 	}
 }
@@ -260,7 +260,7 @@ func TestInstallURLNamesTheAppsPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := app.InstallURL(context.Background()); got != "https://github.com/apps/aenix-aeboard/installations/new" {
+	if got := app.InstallURL(context.Background()); got != "https://github.com/apps/aenix-aenotes/installations/new" {
 		t.Fatalf("InstallURL = %q", got)
 	}
 }

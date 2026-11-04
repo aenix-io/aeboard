@@ -8,13 +8,13 @@ const browser = await chromium.launch();
 const open = async name => {
   const p = await (await browser.newContext({ viewport: { width: 1280, height: 860 } })).newPage();
   p.on('pageerror', e => console.log(`[${name}] pageerror`, e.message));
-  await p.addInitScript(n => localStorage.setItem('aeboard.name', n), name);
+  await p.addInitScript(n => localStorage.setItem('aenotes.name', n), name);
   await p.goto(`${base}/b/${board.id}`);
   await p.waitForSelector('affine-edgeless-root');
   await p.waitForTimeout(800);
   return p;
 };
-const flavours = p => p.evaluate(() => window.aeboard.editor.doc.getAllModels().map(m => m.flavour));
+const flavours = p => p.evaluate(() => window.aenotes.editor.doc.getAllModels().map(m => m.flavour));
 const dragFirst = async p => {
   const box = await p.locator('edgeless-templates-panel .template-item').first().boundingBox();
   await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -36,7 +36,7 @@ await a.waitForTimeout(2500);
 console.log('A after sticker:', (await flavours(a)).join(','));
 console.log('B after sticker:', (await flavours(b)).join(','));
 const img = await b.evaluate(async () => {
-  const m = window.aeboard.editor.doc.getAllModels().find(m => m.flavour === 'affine:image');
+  const m = window.aenotes.editor.doc.getAllModels().find(m => m.flavour === 'affine:image');
   return m ? m.props.sourceId : null;
 });
 const blob = img && (await fetch(`${base}/api/v1/boards/${board.id}/blobs/${encodeURIComponent(img)}`));
@@ -54,7 +54,7 @@ await a.waitForTimeout(1500);
 await dragFirst(a);
 await a.waitForTimeout(3000);
 const count = p => p.evaluate(() => {
-  const d = window.aeboard.editor.doc;
+  const d = window.aenotes.editor.doc;
   const surface = d.getBlocksByFlavour('affine:surface')[0].model;
   return d.getAllModels().length + surface.elementModels.length;
 });

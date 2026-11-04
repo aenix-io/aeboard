@@ -1,6 +1,6 @@
 // Per-visitor rights in the hosted mode. Ported from aeman
 // internal/server/access.go (Apache-2.0), narrowed from aeman's list of
-// domains to aeboard's one board repository: the visitor's permission on
+// domains to aenotes's one board repository: the visitor's permission on
 // it, asked with their own token, is their right on every board.
 
 package server
@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aenix-io/aeboard/internal/forge"
+	"github.com/aenix-io/aenotes/internal/forge"
 )
 
 // Access is what a visitor may do with the boards.

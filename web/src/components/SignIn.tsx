@@ -20,7 +20,7 @@ export function SignIn({ forge }: { forge: string }) {
   return (
     <div className="gate">
       <div className="gate-card">
-        <h1>aeboard</h1>
+        <h1>aenotes</h1>
         <p className="muted">Collaborative whiteboards. Sign in to see the boards you have access to.</p>
         <a className="primary button" href={signInHref()}>
           Sign in with {forge}

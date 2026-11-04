@@ -23,7 +23,7 @@ import (
 func newRemote(t *testing.T) (Remote, *git.Repository) {
 	t.Helper()
 	if _, err := exec.LookPath("git-upload-pack"); err != nil {
-		if os.Getenv("AEBOARD_TEST_REQUIRE_GIT") != "" {
+		if os.Getenv("AENOTES_TEST_REQUIRE_GIT") != "" {
 			t.Fatal("git-upload-pack not found")
 		}
 		t.Skip("file:// transport needs the git binaries")

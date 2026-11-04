@@ -1,10 +1,10 @@
 {{/* Chart name. */}}
-{{- define "aeboard.name" -}}
+{{- define "aenotes.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/* Fully qualified app name. */}}
-{{- define "aeboard.fullname" -}}
+{{- define "aenotes.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -18,14 +18,14 @@
 {{- end }}
 
 {{/* Chart label. */}}
-{{- define "aeboard.chart" -}}
+{{- define "aenotes.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/* Common labels. */}}
-{{- define "aeboard.labels" -}}
-helm.sh/chart: {{ include "aeboard.chart" . }}
-{{ include "aeboard.selectorLabels" . }}
+{{- define "aenotes.labels" -}}
+helm.sh/chart: {{ include "aenotes.chart" . }}
+{{ include "aenotes.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -33,20 +33,20 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/* Selector labels. */}}
-{{- define "aeboard.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "aeboard.name" . }}
+{{- define "aenotes.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "aenotes.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/* The tunnel connector's selector labels: a name of its own, so the
-     Service, which selects the aeboard pods by aeboard.selectorLabels, never
+     Service, which selects the aenotes pods by aenotes.selectorLabels, never
      sends traffic to a connector pod. */}}
-{{- define "aeboard.cloudflaredSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "aeboard.name" . }}-cloudflared
+{{- define "aenotes.cloudflaredSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "aenotes.name" . }}-cloudflared
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/* The data claim's name. */}}
-{{- define "aeboard.claimName" -}}
-{{- default (printf "%s-data" (include "aeboard.fullname" .)) .Values.persistence.existingClaim }}
+{{- define "aenotes.claimName" -}}
+{{- default (printf "%s-data" (include "aenotes.fullname" .)) .Values.persistence.existingClaim }}
 {{- end }}

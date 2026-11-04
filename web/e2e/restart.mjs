@@ -11,17 +11,17 @@ const browser = await chromium.launch();
 const open = async (name, wait = true) => {
   const page = await (await browser.newContext({ viewport: { width: 1200, height: 800 } })).newPage();
   page.on('pageerror', e => console.log(`[${name}] pageerror`, e.message));
-  await page.addInitScript(n => localStorage.setItem('aeboard.name', n), name);
+  await page.addInitScript(n => localStorage.setItem('aenotes.name', n), name);
   const nav = page.goto(`${base}/b/${board}`);
   if (wait) { await nav; await page.waitForSelector('affine-edgeless-root', { timeout: 30000 }); }
   return { page, nav };
 };
 const stats = page => page.evaluate(() => {
-  const store = window.aeboard.editor.doc;
+  const store = window.aenotes.editor.doc;
   const surface = store.getBlocksByFlavour('affine:surface')[0]?.model;
   const flavours = {};
   for (const b of store.getAllModels()) flavours[b.flavour] = (flavours[b.flavour] ?? 0) + 1;
-  return { flavours, elements: surface ? surface.elementModels.length : -1, status: window.aeboard.provider.wsconnected };
+  return { flavours, elements: surface ? surface.elementModels.length : -1, status: window.aenotes.doc.provider?.wsconnected };
 });
 const draw = async (page, x, y) => {
   await page.mouse.click(x - 100, y - 100);

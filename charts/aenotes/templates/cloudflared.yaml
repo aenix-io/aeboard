@@ -8,9 +8,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "aeboard.fullname" . }}-cloudflared
+  name: {{ include "aenotes.fullname" . }}-cloudflared
   labels:
-    {{- include "aeboard.labels" . | nindent 4 }}
+    {{- include "aenotes.labels" . | nindent 4 }}
 data:
   config.yml: |
     tunnel: {{ .Values.cloudflared.tunnelId }}
@@ -22,27 +22,27 @@ data:
     no-autoupdate: true
     ingress:
       - hostname: {{ .Values.cloudflared.hostname }}
-        service: http://{{ include "aeboard.fullname" . }}:{{ .Values.service.port }}
+        service: http://{{ include "aenotes.fullname" . }}:{{ .Values.service.port }}
       - service: http_status:404
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "aeboard.fullname" . }}-cloudflared
+  name: {{ include "aenotes.fullname" . }}-cloudflared
   labels:
-    {{- include "aeboard.labels" . | nindent 4 }}
+    {{- include "aenotes.labels" . | nindent 4 }}
     app.kubernetes.io/component: cloudflared
 spec:
   replicas: {{ .Values.cloudflared.replicas }}
   selector:
     matchLabels:
-      {{- include "aeboard.cloudflaredSelectorLabels" . | nindent 6 }}
+      {{- include "aenotes.cloudflaredSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
         checksum/config: {{ .Values.cloudflared | toJson | sha256sum }}
       labels:
-        {{- include "aeboard.cloudflaredSelectorLabels" . | nindent 8 }}
+        {{- include "aenotes.cloudflaredSelectorLabels" . | nindent 8 }}
     spec:
       securityContext:
         runAsNonRoot: true
@@ -81,7 +81,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "aeboard.fullname" . }}-cloudflared
+            name: {{ include "aenotes.fullname" . }}-cloudflared
         - name: creds
           secret:
             secretName: {{ .Values.cloudflared.existingSecret }}

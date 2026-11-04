@@ -1,4 +1,4 @@
-// Package server is aeboard's HTTP surface: the board REST API, the Yjs sync
+// Package server is aenotes's HTTP surface: the board REST API, the Yjs sync
 // WebSocket (ygo) and the embedded SPA.
 package server
 
@@ -15,8 +15,8 @@ import (
 
 	"github.com/reearth/ygo/provider/websocket"
 
-	"github.com/aenix-io/aeboard/internal/blobs"
-	"github.com/aenix-io/aeboard/internal/boards"
+	"github.com/aenix-io/aenotes/internal/blobs"
+	"github.com/aenix-io/aenotes/internal/boards"
 )
 
 // Server wires the board store to HTTP.
@@ -100,6 +100,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
+	mux.HandleFunc("POST /api/v1/folders", s.createFolder)
+	mux.HandleFunc("PATCH /api/v1/folders/{id}", s.patchFolder)
+	mux.HandleFunc("DELETE /api/v1/folders/{id}", s.deleteFolder)
 	mux.HandleFunc("GET /api/v1/boards/{id}/blobs/{key}", s.getBlob)
 	mux.HandleFunc("PUT /api/v1/boards/{id}/blobs/{key}", s.putBlob)
 	mux.Handle("/api/v1/sync/{room}", s.sync)
@@ -116,24 +119,80 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 type boardList struct {
-	Boards []boards.Meta `json:"boards"`
-	Tags   []string      `json:"tags"`
+	Boards  []boards.Meta   `json:"boards"`
+	Folders []boards.Folder `json:"folders"`
 }
 
 func (s *Server) listBoards(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, boardList{Boards: s.store.List(), Tags: s.store.Tags()})
+	docs := s.store.List()
+	for i := range docs {
+		// A document whose folder was deleted on another replica shows at
+		// the top level.
+		docs[i].Folder = s.store.FolderOf(docs[i])
+	}
+	writeJSON(w, http.StatusOK, boardList{Boards: docs, Folders: s.store.Folders()})
 }
 
-func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
+func (s *Server) createFolder(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Title string   `json:"title"`
-		Tags  []string `json:"tags"`
+		Name   string `json:"name"`
+		Parent string `json:"parent"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Create(in.Title, in.Tags, s.login(r))
+	f, err := s.store.CreateFolder(in.Name, in.Parent)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, f)
+}
+
+func (s *Server) patchFolder(w http.ResponseWriter, r *http.Request) {
+	var p boards.FolderPatch
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&p); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	f, err := s.store.UpdateFolder(r.PathValue("id"), p)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
+}
+
+func (s *Server) deleteFolder(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteFolder(r.PathValue("id")); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ID     string `json:"id"`
+		Mode   string `json:"mode"`
+		Title  string `json:"title"`
+		Folder string `json:"folder"`
+		Blank  bool   `json:"blank"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Folder: in.Folder, Blank: in.Blank}, s.login(r))
+	if errors.Is(err, boards.ErrExists) {
+		writeError(w, http.StatusConflict, "a document with this id exists")
+		return
+	}
+	if errors.Is(err, boards.ErrInvalid) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		s.log.Error("create board", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create the board")
@@ -157,10 +216,14 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Update(r.PathValue("id"), p, s.login(r))
+	m, upd, err := s.store.Update(r.PathValue("id"), p, s.login(r))
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if upd != nil {
+		// The title lives in the document: send it to whoever has it open.
+		s.ApplyRemote(r.Context(), map[string][]byte{m.ID: upd})
 	}
 	writeJSON(w, http.StatusOK, m)
 }
@@ -222,8 +285,15 @@ func (s *Server) login(r *http.Request) string {
 }
 
 func writeStoreError(w http.ResponseWriter, err error) {
-	if errors.Is(err, boards.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "board not found")
+	switch {
+	case errors.Is(err, boards.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	case errors.Is(err, boards.ErrInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	case errors.Is(err, boards.ErrNotEmpty):
+		writeError(w, http.StatusConflict, "the folder is not empty")
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "storage error")

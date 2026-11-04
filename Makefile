@@ -1,4 +1,4 @@
-BINARY := aeboard
+BINARY := aenotes
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
@@ -15,7 +15,7 @@ build: frontend backend
 
 ## backend: the Go binary only (expects web/dist to exist)
 backend:
-	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/aeboard
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/aenotes
 
 lint:
 	golangci-lint run
@@ -35,4 +35,4 @@ tidy:
 
 ## run: serve from source with boards as plain files under ./data
 run:
-	go run ./cmd/aeboard serve
+	go run ./cmd/aenotes serve

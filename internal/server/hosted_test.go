@@ -20,9 +20,9 @@ import (
 	gws "github.com/gorilla/websocket"
 	"github.com/reearth/ygo/crdt"
 
-	"github.com/aenix-io/aeboard/internal/blobs"
-	"github.com/aenix-io/aeboard/internal/boards"
-	"github.com/aenix-io/aeboard/internal/forge"
+	"github.com/aenix-io/aenotes/internal/blobs"
+	"github.com/aenix-io/aenotes/internal/boards"
+	"github.com/aenix-io/aenotes/internal/forge"
 )
 
 // The hosted mode in one place: people sign in with GitHub, and their

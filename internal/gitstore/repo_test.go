@@ -15,7 +15,7 @@ import (
 // The commit path: one action, one commit, written through the object
 // store. These tests pin what a commit holds and when there is none.
 
-var testOpts = Options{Committer: Identity{Name: "aeboard", Email: "aeboard@localhost"}}
+var testOpts = Options{Committer: Identity{Name: "aenotes", Email: "aenotes@localhost"}}
 
 func newRepo(t *testing.T) *Repo {
 	t.Helper()
@@ -129,7 +129,7 @@ func TestAuthorCommitterAndTrailers(t *testing.T) {
 		Actor:    "kvaps",
 		Summary:  "move sticker",
 		At:       at,
-		Trailers: map[string]string{"Aeboard-Board": "b1", "Aeboard-Action": "move"},
+		Trailers: map[string]string{"Aenotes-Board": "b1", "Aenotes-Action": "move"},
 	}, []FileWrite{file("x", "1")})
 	if err != nil {
 		t.Fatal(err)
@@ -138,10 +138,10 @@ func TestAuthorCommitterAndTrailers(t *testing.T) {
 	if c.Author.Name != "kvaps" || c.Author.Email != "kvaps@users.noreply.github.com" {
 		t.Fatalf("author = %v", c.Author)
 	}
-	if c.Committer.Name != "aeboard" || c.Committer.Email != "aeboard@localhost" || !c.Committer.When.Equal(at) {
+	if c.Committer.Name != "aenotes" || c.Committer.Email != "aenotes@localhost" || !c.Committer.When.Equal(at) {
 		t.Fatalf("committer = %v", c.Committer)
 	}
-	want := "move sticker\n\nAeboard-Action: move\nAeboard-Board: b1\n"
+	want := "move sticker\n\nAenotes-Action: move\nAenotes-Board: b1\n"
 	if c.Message != want {
 		t.Fatalf("message = %q, want %q", c.Message, want)
 	}
@@ -149,7 +149,7 @@ func TestAuthorCommitterAndTrailers(t *testing.T) {
 	// Unattributed: the committer is the author; no trailers, no blank line.
 	h = commit(t, r, "sweep", file("x", "2"))
 	c = getCommit(t, r, h)
-	if c.Author.Name != "aeboard" || c.Message != "sweep\n" || len(c.ParentHashes) != 1 {
+	if c.Author.Name != "aenotes" || c.Message != "sweep\n" || len(c.ParentHashes) != 1 {
 		t.Fatalf("unattributed commit = %v %q %v", c.Author, c.Message, c.ParentHashes)
 	}
 
@@ -167,9 +167,9 @@ func TestBadTrailersAndSummaryRefused(t *testing.T) {
 	r := newRepo(t)
 	for name, a := range map[string]Action{
 		"foreign key":   {Summary: "s", Trailers: map[string]string{"Signed-off-by": "x"}},
-		"bare prefix":   {Summary: "s", Trailers: map[string]string{"Aeboard-": "x"}},
-		"space in key":  {Summary: "s", Trailers: map[string]string{"Aeboard-A B": "x"}},
-		"newline value": {Summary: "s", Trailers: map[string]string{"Aeboard-A": "x\ny"}},
+		"bare prefix":   {Summary: "s", Trailers: map[string]string{"Aenotes-": "x"}},
+		"space in key":  {Summary: "s", Trailers: map[string]string{"Aenotes-A B": "x"}},
+		"newline value": {Summary: "s", Trailers: map[string]string{"Aenotes-A": "x\ny"}},
 		"two lines":     {Summary: "s\nmore"},
 	} {
 		if _, err := r.Commit(a, []FileWrite{file("x", "1")}); err == nil {

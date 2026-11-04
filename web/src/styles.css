@@ -1,4 +1,4 @@
-/* aeboard shell styles. Tokens follow aeman's light theme so the two tools
+/* aenotes shell styles. Tokens follow aeman's light theme so the two tools
    read as one family; the board canvas itself is styled by BlockSuite. */
 :root {
   color-scheme: light;
@@ -58,6 +58,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 .page { max-width: 1100px; margin: 0 auto; padding: 16px 16px 40px; }
 .list-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 28px 0 12px; }
 .list-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
+.list-head .crumbs { margin-left: -6px; }
 .list-tools { display: flex; gap: 8px; flex: 1; justify-content: flex-end; flex-wrap: wrap; }
 .search { width: 220px; max-width: 100%; }
 
@@ -135,3 +136,50 @@ a.button.primary:hover { filter: brightness(0.95); }
 .signout { display: inline; margin: 0; }
 .chip-muted { color: var(--muted); font-size: 11px; padding: 0 7px; line-height: 16px; }
 .title-static { margin: 0; padding: 4px 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* segmented switch (Board | Page, All | Boards | Pages), as aeman's */
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.segmented .segment { border: none; border-radius: 0; padding: 3px 10px; font-size: 12px; background: var(--bg); color: var(--muted); }
+.segmented .segment + .segment { border-left: 1px solid var(--line); }
+.segmented .segment-active { background: var(--bg-soft); color: var(--fg); font-weight: 600; }
+.list-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.board-title { display: flex; align-items: center; gap: 6px; }
+.kind { display: inline-flex; color: var(--muted); flex: none; }
+.kind-page { color: var(--accent); }
+
+/* BlockSuite's notifications (src/board/notifications.ts) */
+#aenotes-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }
+.aenotes-toast { background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(27, 31, 36, 0.16); font-size: 13px; }
+.aenotes-toast-success { border-left-color: #1a7f37; }
+.aenotes-toast-warning { border-left-color: #b8860b; }
+.aenotes-toast-error { border-left-color: var(--danger); }
+.aenotes-toast-title { font-weight: 600; }
+.aenotes-toast-message { color: var(--muted); margin-top: 2px; }
+.aenotes-toast-actions { display: flex; gap: 6px; margin-top: 8px; }
+.aenotes-toast-actions button { padding: 2px 10px; font-size: 12px; }
+
+/* folders on the start page */
+.crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 20px; font-weight: 600; }
+.crumbs-small { font-size: 14px; font-weight: 500; }
+.crumb { color: var(--fg); text-decoration: none; padding: 2px 6px; border-radius: var(--radius); border: 1px dashed transparent; }
+.crumb:hover { background: var(--bg-soft); }
+.crumb-sep { color: var(--faint); }
+.crumb-sep-wrap { display: inline-flex; align-items: center; gap: 4px; }
+[data-drop='over'] { outline: 2px dashed var(--accent); outline-offset: 2px; background: var(--bg-soft); }
+.hint { font-size: 12px; }
+.kind-folder { color: #b8860b; }
+.board-card { position: relative; }
+.board-card[draggable='true'] { cursor: grab; }
+.item-menu { position: absolute; top: 8px; right: 8px; }
+.item-menu-button { border: none; background: none; padding: 0 6px; color: var(--faint); font-size: 16px; line-height: 1; opacity: 0; }
+.board-card:hover .item-menu-button, .item-menu-button[aria-expanded='true'] { opacity: 1; }
+.item-menu-button:hover { color: var(--fg); background: var(--bg-soft); }
+.item-menu-list { position: absolute; right: 0; top: 22px; z-index: 5; display: flex; flex-direction: column; min-width: 130px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 4px 16px rgba(27, 31, 36, 0.14); padding: 4px; }
+.item-menu-list button { border: none; text-align: left; padding: 5px 10px; font-size: 13px; }
+.dialog-scrim { position: fixed; inset: 0; background: rgba(27, 31, 36, 0.35); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.dialog { background: var(--bg); border-radius: 10px; padding: 16px; width: min(420px, calc(100vw - 32px)); max-height: 80vh; display: flex; flex-direction: column; gap: 10px; }
+.dialog h2 { margin: 0; font-size: 16px; }
+.move-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
+.move-list button { width: 100%; text-align: left; border: none; display: flex; align-items: center; gap: 6px; padding-top: 6px; padding-bottom: 6px; }
+.move-list button:disabled { color: var(--faint); cursor: default; background: none; }

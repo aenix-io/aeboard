@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "aeboard.claimName" . }}
+  name: {{ include "aenotes.claimName" . }}
   labels:
-    {{- include "aeboard.labels" . | nindent 4 }}
+    {{- include "aenotes.labels" . | nindent 4 }}
   annotations:
     # Uninstalling the release keeps the clones and the sessions.
     helm.sh/resource-policy: keep

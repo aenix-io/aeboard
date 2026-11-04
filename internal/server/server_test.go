@@ -11,8 +11,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/aenix-io/aeboard/internal/blobs"
-	"github.com/aenix-io/aeboard/internal/boards"
+	"github.com/aenix-io/aenotes/internal/blobs"
+	"github.com/aenix-io/aenotes/internal/boards"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -49,21 +49,21 @@ func do(t *testing.T, method, url, body string) (int, string) {
 
 func TestBoardLifecycle(t *testing.T) {
 	ts := newTestServer(t)
-	code, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"title":"Retro","tags":["team","q4"]}`)
+	code, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"title":"Retro"}`)
 	if code != http.StatusCreated {
 		t.Fatalf("create: %d %s", code, body)
 	}
 	var m boards.Meta
 	_ = json.Unmarshal([]byte(body), &m)
 
-	code, body = do(t, "PATCH", ts.URL+"/api/v1/boards/"+m.ID, `{"tags":["q4","design"]}`)
-	if code != http.StatusOK || !strings.Contains(body, `"Retro"`) {
+	code, body = do(t, "PATCH", ts.URL+"/api/v1/boards/"+m.ID, `{"title":"Retro 2"}`)
+	if code != http.StatusOK || !strings.Contains(body, `"Retro 2"`) {
 		t.Fatalf("patch: %d %s", code, body)
 	}
 	code, body = do(t, "GET", ts.URL+"/api/v1/boards", "")
 	var list boardList
 	_ = json.Unmarshal([]byte(body), &list)
-	if code != http.StatusOK || len(list.Boards) != 1 || strings.Join(list.Tags, ",") != "design,q4" {
+	if code != http.StatusOK || len(list.Boards) != 1 || list.Boards[0].Title != "Retro 2" {
 		t.Fatalf("list: %d %s", code, body)
 	}
 }
@@ -154,5 +154,32 @@ func TestStatusCountsPendingBoards(t *testing.T) {
 	code, body := do(t, "GET", ts.URL+"/api/v1/status", "")
 	if code != http.StatusOK || !strings.Contains(body, `"pending":1`) || !strings.Contains(body, `"backend":"dir"`) {
 		t.Fatalf("status: %d %s", code, body)
+	}
+}
+
+func TestFolderAPI(t *testing.T) {
+	ts := newTestServer(t)
+	code, body := do(t, "POST", ts.URL+"/api/v1/folders", `{"name":"Work"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create folder: %d %s", code, body)
+	}
+	var f boards.Folder
+	_ = json.Unmarshal([]byte(body), &f)
+	code, body = do(t, "POST", ts.URL+"/api/v1/boards", `{"title":"Plan","folder":"`+f.ID+`"}`)
+	if code != http.StatusCreated || !strings.Contains(body, `"folder":"`+f.ID+`"`) {
+		t.Fatalf("create in folder: %d %s", code, body)
+	}
+	if code, _ := do(t, "DELETE", ts.URL+"/api/v1/folders/"+f.ID, ""); code != http.StatusConflict {
+		t.Fatalf("delete non-empty: %d", code)
+	}
+	if code, _ := do(t, "POST", ts.URL+"/api/v1/boards", `{"folder":"nosuchfold"}`); code != http.StatusBadRequest {
+		t.Fatalf("create into a missing folder: %d", code)
+	}
+	if code, body := do(t, "PATCH", ts.URL+"/api/v1/folders/"+f.ID, `{"name":"Work 2"}`); code != 200 || !strings.Contains(body, "Work 2") {
+		t.Fatalf("rename: %d %s", code, body)
+	}
+	_, body = do(t, "GET", ts.URL+"/api/v1/boards", "")
+	if !strings.Contains(body, `"folders":[{`) || !strings.Contains(body, "Work 2") {
+		t.Fatalf("list: %s", body)
 	}
 }

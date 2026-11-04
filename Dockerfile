@@ -24,7 +24,7 @@ COPY . .
 COPY --from=web /src/web/dist ./web/dist
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION}" \
-    -o /aeboard ./cmd/aeboard
+    -o /aenotes ./cmd/aenotes
 RUN mkdir -p /data && chown 65532:65532 /data
 
 # 3. Runtime: the static binary plus git (for file:// remotes and store
@@ -34,10 +34,10 @@ FROM alpine:3.21
 RUN apk add --no-cache git ca-certificates \
  && addgroup -g 65532 nonroot \
  && adduser -D -H -u 65532 -G nonroot nonroot
-COPY --from=build /aeboard /aeboard
+COPY --from=build /aenotes /aenotes
 COPY --from=build --chown=65532:65532 /data /data
 USER 65532:65532
-ENV AEBOARD_DATA=/data
+ENV AENOTES_DATA=/data
 EXPOSE 8766
-ENTRYPOINT ["/aeboard"]
+ENTRYPOINT ["/aenotes"]
 CMD ["serve", "--addr=0.0.0.0:8766", "--identity=none"]

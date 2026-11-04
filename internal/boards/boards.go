@@ -1,9 +1,9 @@
-// Package boards is the board catalogue: each board's metadata (title, tags)
+// Package boards is the document catalogue: each document's metadata (title, folder)
 // and its Yjs state, held in memory and written behind to a Backend.
 //
 // Every board is a directory in the backend:
 //
-//	boards/<id>/board.json   metadata (title, tags, timestamps)
+//	boards/<id>/board.json   metadata (mode, title, folder, timestamps)
 //	boards/<id>/state.jsonl  the Yjs state as text (package ytext) — the source of truth
 //	boards/<id>/doc.json     the same document as JSON, for reading and diffs
 //
@@ -27,7 +27,7 @@ import (
 
 	"github.com/reearth/ygo/crdt"
 
-	"github.com/aenix-io/aeboard/internal/seed"
+	"github.com/aenix-io/aenotes/internal/seed"
 )
 
 // ErrNotFound is returned for an id that names no board.
@@ -35,17 +35,54 @@ var ErrNotFound = errors.New("board not found")
 
 // Meta is a board's catalogue entry.
 type Meta struct {
-	ID      string    `json:"id"`
-	Title   string    `json:"title"`
-	Tags    []string  `json:"tags"`
+	ID string `json:"id"`
+	// Mode is how the document opens: "edgeless" (a board) or "page".
+	Mode string `json:"mode"`
+	// Title mirrors the title written in the document itself (its root
+	// block's title); the store keeps the two in step.
+	Title string `json:"title"`
+	// Folder is the folder the document is in; "" is the top level.
+	Folder  string    `json:"folder"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 }
 
+// Document modes.
+const (
+	ModeEdgeless = "edgeless"
+	ModePage     = "page"
+)
+
+// ErrExists is returned when a document is created under an id in use.
+var ErrExists = errors.New("document already exists")
+
+// ErrInvalid is returned for a create request that names a bad id or mode.
+var ErrInvalid = errors.New("invalid document")
+
+// CreateInput is a new document.
+type CreateInput struct {
+	// ID is chosen by the client when it needs the id before the round trip
+	// (a page created from the editor's link menu); empty mints one.
+	ID     string
+	Mode   string
+	Title  string
+	Folder string
+	// Blank starts the document with no blocks at all instead of the seed:
+	// the editor's "new doc" path (BlockSuite's createDefaultDoc) builds the
+	// root blocks itself in the creating browser, and a seed under them
+	// would make two roots. Only safe for a client-chosen, brand-new id that
+	// nobody else can be opening yet.
+	Blank bool
+}
+
+// emptyUpdate is a Yjs V1 update with nothing in it: no structs, no deletes.
+var emptyUpdate = []byte{0, 0}
+
 // Patch changes a board's metadata; nil fields are left as they are.
 type Patch struct {
-	Title *string   `json:"title,omitempty"`
-	Tags  *[]string `json:"tags,omitempty"`
+	Title *string `json:"title,omitempty"`
+	// Folder moves the document ("" is the top level).
+	Folder *string `json:"folder,omitempty"`
 }
 
 // Snapshot is one board as a backend stores it.
@@ -72,6 +109,11 @@ type Store struct {
 
 	mu     sync.Mutex
 	boards map[string]*board
+	// folders is the folder tree (tombstones included); foldersDirty is set
+	// while it has changes the backend has not got (see folders.go).
+	folders      map[string]Folder
+	foldersDirty bool
+	foldersGen   uint64
 	// flushMu serialises flushes so two never write the same board at once.
 	flushMu sync.Mutex
 	// changed is signalled (non-blocking) on every new dirty mark.
@@ -105,15 +147,41 @@ func Open(ctx context.Context, backend Backend) (*Store, error) {
 		backend:   backend,
 		now:       time.Now,
 		boards:    map[string]*board{},
+		folders:   map[string]Folder{},
 		changed:   make(chan struct{}, 1),
 		listeners: map[int]func(){},
 	}
 	for _, sn := range snaps {
-		m := sn.Meta
-		m.Tags = normTags(m.Tags)
-		s.boards[m.ID] = &board{meta: m, state: sn.State}
+		b := &board{meta: sn.Meta, state: sn.State}
+		normMeta(&b.meta)
+		// Documents stored before titles lived in the document carry their
+		// title only in the catalog: write it into the document once.
+		if b.meta.Title != "" && len(b.state) > 0 && DocTitle(b.state) == "" {
+			if upd, err := titleUpdate(b.state, b.meta.Title); err == nil && upd != nil {
+				if merged, err := MergeStates(b.state, upd); err == nil && merged != nil {
+					b.state = merged
+					s.markLocked(b, "")
+				}
+			}
+		}
+		s.boards[b.meta.ID] = b
+	}
+	if fb, ok := backend.(FolderBackend); ok {
+		fs, err := fb.LoadFolders(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range fs {
+			s.folders[f.ID] = f
+		}
 	}
 	return s, nil
+}
+
+func normMeta(m *Meta) {
+	if m.Mode != ModePage {
+		m.Mode = ModeEdgeless
+	}
 }
 
 // List returns every board, most recently updated first.
@@ -144,20 +212,60 @@ func (s *Store) Get(id string) (Meta, error) {
 	return cloneMeta(b.meta), nil
 }
 
-// Create adds a board that starts from the seed state. actor may be empty.
-func (s *Store) Create(title string, tags []string, actor string) (Meta, error) {
+// Create adds a document that starts from its mode's seed state, with the
+// title written into it. actor may be empty.
+func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
+	if in.Mode == "" {
+		in.Mode = ModeEdgeless
+	}
+	if in.Mode != ModeEdgeless && in.Mode != ModePage {
+		return Meta{}, fmt.Errorf("%w: mode %q", ErrInvalid, in.Mode)
+	}
+	if in.ID != "" && !ValidID(in.ID) {
+		return Meta{}, fmt.Errorf("%w: id %q", ErrInvalid, in.ID)
+	}
+	title := strings.TrimSpace(in.Title)
+	state := seed.For(in.Mode)
+	if in.Blank {
+		if in.ID == "" {
+			return Meta{}, fmt.Errorf("%w: a blank document needs a client-chosen id", ErrInvalid)
+		}
+		state = bytes.Clone(emptyUpdate)
+	} else if title != "" {
+		upd, err := titleUpdate(state, title)
+		if err != nil {
+			return Meta{}, err
+		}
+		if upd != nil {
+			merged, err := MergeStates(state, upd)
+			if err != nil {
+				return Meta{}, err
+			}
+			if merged != nil {
+				state = merged
+			}
+		}
+	}
+
 	s.mu.Lock()
-	id := newID()
-	for s.boards[id] != nil {
+	if !s.liveFolderLocked(in.Folder) {
+		s.mu.Unlock()
+		return Meta{}, fmt.Errorf("%w: no folder %q", ErrInvalid, in.Folder)
+	}
+	id := in.ID
+	if id == "" {
 		id = newID()
+		for s.boards[id] != nil {
+			id = newID()
+		}
+	} else if s.boards[id] != nil {
+		s.mu.Unlock()
+		return Meta{}, ErrExists
 	}
 	now := s.now().UTC()
 	b := &board{
-		meta:  Meta{ID: id, Title: strings.TrimSpace(title), Tags: normTags(tags), Created: now, Updated: now},
-		state: seed.Update(),
-	}
-	if b.meta.Title == "" {
-		b.meta.Title = "Untitled board"
+		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Folder: in.Folder, Created: now, Updated: now},
+		state: state,
 	}
 	s.boards[id] = b
 	s.markLocked(b, actor)
@@ -167,22 +275,47 @@ func (s *Store) Create(title string, tags []string, actor string) (Meta, error) 
 	return m, nil
 }
 
-// Update applies a metadata patch.
-func (s *Store) Update(id string, p Patch, actor string) (Meta, error) {
+// Update applies a metadata patch. A new title is written into the
+// document; the returned update (nil when the title did not change) is what
+// the document's live room must be sent.
+func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 	s.mu.Lock()
 	b, ok := s.boards[id]
 	if !ok {
 		s.mu.Unlock()
-		return Meta{}, ErrNotFound
+		return Meta{}, nil, ErrNotFound
 	}
 	m := b.meta
+	var upd []byte
 	if p.Title != nil {
-		if t := strings.TrimSpace(*p.Title); t != "" {
-			m.Title = t
+		title := strings.TrimSpace(*p.Title)
+		cur := b.state
+		if len(cur) == 0 {
+			cur = seed.For(m.Mode)
 		}
+		var err error
+		if upd, err = titleUpdate(cur, title); err != nil {
+			s.mu.Unlock()
+			return Meta{}, nil, err
+		}
+		if upd != nil {
+			merged, err := MergeStates(cur, upd)
+			if err != nil {
+				s.mu.Unlock()
+				return Meta{}, nil, err
+			}
+			if merged != nil {
+				b.state = merged
+			}
+		}
+		m.Title = title
 	}
-	if p.Tags != nil {
-		m.Tags = normTags(*p.Tags)
+	if p.Folder != nil {
+		if !s.liveFolderLocked(*p.Folder) {
+			s.mu.Unlock()
+			return Meta{}, nil, fmt.Errorf("%w: no folder %q", ErrInvalid, *p.Folder)
+		}
+		m.Folder = *p.Folder
 	}
 	m.Updated = s.now().UTC()
 	b.meta = m
@@ -190,25 +323,7 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, error) {
 	out := cloneMeta(m)
 	s.mu.Unlock()
 	s.notify()
-	return out, nil
-}
-
-// Tags returns every tag in use, sorted. Tags are case-insensitive: "Ops"
-// on one board and "ops" on another are one tag, listed in the spelling of
-// the board created first.
-func (s *Store) Tags() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	all := make([]*board, 0, len(s.boards))
-	for _, b := range s.boards {
-		all = append(all, b)
-	}
-	slices.SortFunc(all, func(a, b *board) int { return a.meta.Created.Compare(b.meta.Created) })
-	var tags []string
-	for _, b := range all {
-		tags = append(tags, b.meta.Tags...)
-	}
-	return normTags(tags)
+	return out, upd, nil
 }
 
 // LoadState returns a board's Yjs state (the seed for a board that never
@@ -221,7 +336,7 @@ func (s *Store) LoadState(id string) ([]byte, error) {
 		return nil, ErrNotFound
 	}
 	if len(b.state) == 0 {
-		return seed.Update(), nil
+		return seed.For(b.meta.Mode), nil
 	}
 	return bytes.Clone(b.state), nil
 }
@@ -239,7 +354,7 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 	}
 	cur := b.state
 	if len(cur) == 0 {
-		cur = seed.Update()
+		cur = seed.For(b.meta.Mode)
 	}
 	merged, err := MergeStates(cur, update)
 	if err != nil {
@@ -251,6 +366,7 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 		return false, nil
 	}
 	b.state = merged
+	b.meta.Title = DocTitle(merged)
 	b.meta.Updated = s.now().UTC()
 	if len(editors) == 0 {
 		s.markLocked(b, "")
@@ -284,13 +400,13 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 		b, ok := s.boards[id]
 		if !ok {
 			m := r.Meta
-			m.Tags = normTags(m.Tags)
+			normMeta(&m)
 			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State)}
 			continue
 		}
 		if r.Meta.Updated.After(b.meta.Updated) {
 			m := r.Meta
-			m.Tags = normTags(m.Tags)
+			normMeta(&m)
 			b.meta = m
 		}
 		if len(r.State) == 0 {
@@ -298,7 +414,7 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 		}
 		cur := b.state
 		if len(cur) == 0 {
-			cur = seed.Update()
+			cur = seed.For(b.meta.Mode)
 		}
 		merged, err := MergeStates(cur, r.State)
 		if err != nil {
@@ -312,6 +428,9 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			return gained, fmt.Errorf("board %s: %w", id, err)
 		}
 		b.state = merged
+		if t := DocTitle(merged); t != "" {
+			b.meta.Title = t
+		}
 		gained[id] = diff
 	}
 	return gained, nil
@@ -344,7 +463,7 @@ func (s *Store) Snapshot(id string) (Snapshot, error) {
 func snapshotOf(b *board) Snapshot {
 	state := b.state
 	if len(state) == 0 {
-		state = seed.Update()
+		state = seed.For(b.meta.Mode)
 	}
 	eds := make([]string, 0, len(b.editors))
 	for e := range b.editors {
@@ -384,6 +503,9 @@ func (s *Store) Pending() int {
 		if b.dirty {
 			n++
 		}
+	}
+	if s.foldersDirty {
+		n++
 	}
 	return n
 }
@@ -451,6 +573,14 @@ func (s *Store) flush(ctx context.Context, due func(string, *board) bool, ids ..
 		}
 	}
 	s.mu.Unlock()
+	// The folder tree goes with every full flush (a flush of named boards —
+	// a room closing — leaves it to the next tick).
+	if len(ids) == 0 {
+		if err := s.flushFolders(ctx); err != nil {
+			return err
+		}
+		defer s.notify()
+	}
 	if len(snaps) == 0 {
 		return nil
 	}
@@ -536,28 +666,7 @@ func MergeStates(state, update []byte) ([]byte, error) {
 	return after, nil
 }
 
-// normTags trims, drops empties and duplicates, and sorts. Tags compare
-// case-insensitively but keep the case they were first written with.
-func normTags(tags []string) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, t := range tags {
-		t = strings.TrimSpace(t)
-		k := strings.ToLower(t)
-		if t == "" || seen[k] {
-			continue
-		}
-		seen[k] = true
-		out = append(out, t)
-	}
-	slices.SortFunc(out, func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) })
-	return out
-}
-
-func cloneMeta(m Meta) Meta {
-	m.Tags = slices.Clone(m.Tags)
-	return m
-}
+func cloneMeta(m Meta) Meta { return m }
 
 const idAlphabet = "0123456789abcdefghjkmnpqrstvwxyz"
 

@@ -1,7 +1,7 @@
 // Ported from aeman internal/server/auth.go (Apache-2.0): the sign-in web
 // flow, the sessions and their encrypted file, GitHub App user-token
 // renewal. aeman's MCP authorization server (dynamic client registration,
-// PKCE codes, the consent screen) is not part of aeboard.
+// PKCE codes, the consent screen) is not part of aenotes.
 
 package server
 
@@ -19,13 +19,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aenix-io/aeboard/internal/forge"
+	"github.com/aenix-io/aenotes/internal/forge"
 )
 
 const (
-	sessionCookie = "aeboard_session"
-	stateCookie   = "aeboard_oauth_state"
-	nextCookie    = "aeboard_oauth_next"
+	sessionCookie = "aenotes_session"
+	stateCookie   = "aenotes_oauth_state"
+	nextCookie    = "aenotes_oauth_next"
 	sessionTTL    = 14 * 24 * time.Hour
 	// stateTTL bounds a sign-in: the state cookie outlives no abandoned
 	// round trip to the forge by more than this.
@@ -162,7 +162,7 @@ func (a *authManager) load() {
 	}
 	sessions, err := decryptSessions(a.sessionKey, in.EncSessions)
 	if err != nil {
-		a.log.Error("session decrypt failed (wrong AEBOARD_SESSION_KEY?); signing everyone out", "err", err)
+		a.log.Error("session decrypt failed (wrong AENOTES_SESSION_KEY?); signing everyone out", "err", err)
 		return
 	}
 	now := time.Now()

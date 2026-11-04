@@ -8,7 +8,7 @@ import { defineConfig, type Plugin } from 'vite';
 // (Same trick as aeman's web/vite.config.ts.)
 function keepDist(): Plugin {
   return {
-    name: 'aeboard-keep-dist',
+    name: 'aenotes-keep-dist',
     closeBundle() {
       writeFileSync('dist/.gitkeep', '');
     },
@@ -16,7 +16,7 @@ function keepDist(): Plugin {
 }
 
 // During `vite dev`, /api/* (REST and the sync WebSocket) is proxied to the
-// aeboard Go binary.
+// aenotes Go binary.
 export default defineConfig({
   plugins: [react(), vanillaExtractPlugin(), keepDist()],
   build: { outDir: 'dist', emptyOutDir: true, target: 'es2022' },

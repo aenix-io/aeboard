@@ -88,3 +88,21 @@ func readOptional(path string) ([]byte, error) {
 	}
 	return b, err
 }
+
+// LoadFolders reads Root/folders.json.
+func (d DirBackend) LoadFolders(context.Context) ([]Folder, error) {
+	data, err := readOptional(filepath.Join(d.Root, FoldersFile))
+	if err != nil {
+		return nil, err
+	}
+	return DecodeFolders(data)
+}
+
+// SaveFolders writes Root/folders.json.
+func (d DirBackend) SaveFolders(_ context.Context, folders []Folder) error {
+	data, err := EncodeFolders(folders)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(filepath.Join(d.Root, FoldersFile), data)
+}

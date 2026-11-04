@@ -1,6 +1,6 @@
 // The visitor's display name for presence (cursors). Until sign-in lands it
 // is chosen locally and remembered in this browser.
-const KEY = 'aeboard.name';
+const KEY = 'aenotes.name';
 
 export function loadName(): string {
   try {
