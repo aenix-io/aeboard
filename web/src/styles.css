@@ -286,8 +286,10 @@ a.sb-foot-button { text-decoration: none; }
 /* the quick finder (Search, ⌘K) */
 .search-scrim { align-items: flex-start; padding-top: 12vh; }
 .search-dialog { background: var(--bg); border-radius: 12px; width: min(640px, calc(100vw - 32px)); max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(27, 31, 36, 0.25); overflow: hidden; }
-.app .search-input { border: none; border-bottom: 1px solid var(--line-soft); border-radius: 0; padding: 16px 18px; font-size: 16px; outline: none; }
-.app .search-input:focus { outline: none; }
+/* The dialog sits outside .app, so the field is styled on its own. */
+.search-input { display: block; width: 100%; box-sizing: border-box; border: none; border-bottom: 1px solid var(--line-soft); border-radius: 0; padding: 18px 20px; font-size: 16px; background: var(--bg); color: var(--fg); outline: none; }
+.search-input::placeholder { color: var(--faint); }
+.search-input:focus { outline: none; }
 .search-results { overflow: auto; padding: 6px; }
 .search-section-title { font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 12px 4px; }
 .search-item { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; padding: 8px 12px; border-radius: 8px; text-align: left; font-size: 14px; }
