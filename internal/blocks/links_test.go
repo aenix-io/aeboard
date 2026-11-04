@@ -103,3 +103,21 @@ func TestUnlink(t *testing.T) {
 		t.Fatalf("inline: %v", err)
 	}
 }
+
+// Retargeting moves every link from one document to another.
+func TestRetarget(t *testing.T) {
+	s := sample(t)
+	for _, id := range []string{"abcdefghjk", "mnpqrstvwx"} {
+		upd, err := Retarget(s, id, "zzzzzzzzzz")
+		if err != nil || upd == nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		s = apply(t, s, upd)
+	}
+	if got := linksIn(t, s); got != "zzzzzzzzzz" {
+		t.Fatalf("links: %s", got)
+	}
+	if upd, err := Retarget(s, "nothere000", "x"); err != nil || upd != nil {
+		t.Fatalf("nothing to retarget: %v %v", upd, err)
+	}
+}

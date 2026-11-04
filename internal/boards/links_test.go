@@ -93,3 +93,33 @@ func TestTrashAndDelete(t *testing.T) {
 		t.Fatalf("the id was reused: %v", err)
 	}
 }
+
+// A document has one home: a folder or a parent document, never inside
+// itself; a copy lives where the shortcut was, and the link follows it.
+func TestHomesAndCopies(t *testing.T) {
+	s := open(t, DirBackend{Root: t.TempDir()})
+	p, _ := s.Create(CreateInput{Mode: ModePage, Title: "P"}, "")
+	c, err := s.Create(CreateInput{Mode: ModePage, Title: "C", Parent: p.ID}, "")
+	if err != nil || c.Parent != p.ID || c.Folder != "" {
+		t.Fatalf("create inside: %+v %v", c, err)
+	}
+	if _, _, err := s.Update(p.ID, Patch{Parent: &c.ID}, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a parent went inside its child: %v", err)
+	}
+	f, _ := s.CreateFolder("F", "")
+	m, _, err := s.Update(c.ID, Patch{Folder: &f.ID}, "")
+	if err != nil || m.Parent != "" || m.Folder != f.ID {
+		t.Fatalf("to a folder: %+v %v", m, err)
+	}
+	other, _ := s.Create(CreateInput{Mode: ModePage, Title: "Other"}, "")
+	if _, err := s.Link(other.ID, c.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	cp, upd, err := s.Copy(c.ID, other.ID, "")
+	if err != nil || upd == nil || cp.Parent != other.ID || cp.Title != "C" {
+		t.Fatalf("copy: %+v %v", cp, err)
+	}
+	if got := s.Links()[other.ID]; !slices.Equal(got, []string{cp.ID}) {
+		t.Fatalf("links after copy: %v", got)
+	}
+}

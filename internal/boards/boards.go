@@ -44,6 +44,10 @@ type Meta struct {
 	Title string `json:"title"`
 	// Folder is the folder the document is in; "" is the top level.
 	Folder string `json:"folder"`
+	// Parent is the document this one lives inside, when it does (then
+	// Folder is ""): every document has one home, a folder or a document.
+	// Links to it from other documents are shortcuts.
+	Parent string `json:"parent,omitempty"`
 	// Rank orders the document among its folder's contents (see ValidRank);
 	// "" sorts after the ranked ones, by title.
 	Rank    string    `json:"rank,omitempty"`
@@ -78,6 +82,8 @@ type CreateInput struct {
 	Mode   string
 	Title  string
 	Folder string
+	// Parent creates the document inside another one.
+	Parent string
 	// Blank starts the document with no blocks at all instead of the seed:
 	// the editor's "new doc" path (BlockSuite's createDefaultDoc) builds the
 	// root blocks itself in the creating browser, and a seed under them
@@ -92,8 +98,12 @@ var emptyUpdate = []byte{0, 0}
 // Patch changes a board's metadata; nil fields are left as they are.
 type Patch struct {
 	Title *string `json:"title,omitempty"`
-	// Folder moves the document ("" is the top level).
+	// Folder moves the document into a folder ("" is the top level), out of
+	// any parent document.
 	Folder *string `json:"folder,omitempty"`
+	// Parent moves the document inside another one ("" takes it out, to
+	// the folder level).
+	Parent *string `json:"parent,omitempty"`
 	// Rank places it among its folder's contents.
 	Rank *string `json:"rank,omitempty"`
 	// Trashed moves the document to the trash (true) or restores it.
@@ -277,6 +287,13 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 		s.mu.Unlock()
 		return Meta{}, fmt.Errorf("%w: no folder %q", ErrInvalid, in.Folder)
 	}
+	if in.Parent != "" {
+		if _, ok := s.liveLocked(in.Parent); !ok {
+			s.mu.Unlock()
+			return Meta{}, fmt.Errorf("%w: no document %q", ErrInvalid, in.Parent)
+		}
+		in.Folder = ""
+	}
 	id := in.ID
 	if id == "" {
 		id = newID()
@@ -289,7 +306,7 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 	}
 	now := s.now().UTC()
 	b := &board{
-		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Folder: in.Folder, Created: now, Updated: now},
+		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Folder: in.Folder, Parent: in.Parent, Created: now, Updated: now},
 		state: state,
 	}
 	b.links = linksOf(id, state)
@@ -359,6 +376,17 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 			return Meta{}, nil, fmt.Errorf("%w: no folder %q", ErrInvalid, *p.Folder)
 		}
 		m.Folder = *p.Folder
+		m.Parent = ""
+	}
+	if p.Parent != nil && *p.Parent != "" {
+		if err := s.canHoldLocked(*p.Parent, id); err != nil {
+			s.mu.Unlock()
+			return Meta{}, nil, err
+		}
+		m.Parent = *p.Parent
+		m.Folder = ""
+	} else if p.Parent != nil {
+		m.Parent = ""
 	}
 	m.Updated = s.now().UTC()
 	b.meta = m
@@ -553,6 +581,39 @@ func (s *Store) PlaceChild(parent, child string, place blocks.Place, actor strin
 	})
 }
 
+// Copy makes a separate document from id, inside into, with the same
+// content, and points into's links to id at the copy: a shortcut becomes a
+// document of its own there. It returns the copy and the update for into.
+func (s *Store) Copy(id, into, actor string) (Meta, []byte, error) {
+	src, err := s.Get(id)
+	if err != nil {
+		return Meta{}, nil, err
+	}
+	state, err := s.LoadState(id)
+	if err != nil {
+		return Meta{}, nil, err
+	}
+	m, err := s.Create(CreateInput{Mode: src.Mode, Parent: into, Blank: false}, actor)
+	if err != nil {
+		return Meta{}, nil, err
+	}
+	// The copy's own state is the source's: same blocks, same title.
+	s.mu.Lock()
+	b := s.boards[m.ID]
+	b.state = bytes.Clone(state)
+	b.meta.Title = src.Title
+	b.links = linksOf(m.ID, b.state)
+	s.catalogVersion++
+	s.markLocked(b, actor)
+	m = cloneMeta(b.meta)
+	s.mu.Unlock()
+	s.notify()
+	upd, err := s.editState(into, actor, func(st []byte) ([]byte, error) {
+		return blocks.Retarget(st, id, m.ID)
+	})
+	return m, upd, err
+}
+
 // ErrInlineLink is returned for taking a child out of a document that
 // mentions it in its text: that link is the author's to remove.
 var ErrInlineLink = blocks.ErrInlineLink
@@ -608,6 +669,27 @@ func (s *Store) Delete(id, actor string) error {
 	s.markLocked(b, actor)
 	s.mu.Unlock()
 	s.notify()
+	return nil
+}
+
+// canHoldLocked reports whether parent may hold doc: it is there, and it
+// is neither doc nor inside doc (no document goes inside itself).
+func (s *Store) canHoldLocked(parent, doc string) error {
+	if _, ok := s.liveLocked(parent); !ok {
+		return fmt.Errorf("%w: no document %q", ErrInvalid, parent)
+	}
+	seen := map[string]bool{}
+	for at := parent; at != "" && !seen[at]; {
+		if at == doc {
+			return fmt.Errorf("%w: a document cannot go inside itself", ErrInvalid)
+		}
+		seen[at] = true
+		b := s.boards[at]
+		if b == nil {
+			break
+		}
+		at = b.meta.Parent
+	}
 	return nil
 }
 

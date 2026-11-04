@@ -187,8 +187,11 @@ func TestCreateInsideAParent(t *testing.T) {
 	var l listOut
 	call(t, cs, "list_documents", nil, &l, false)
 	for _, d := range l.Documents {
-		if d.ID == parent.ID && (len(d.Children) != 1 || d.Children[0] != child.ID) {
-			t.Fatalf("children: %+v", d)
+		if d.ID == parent.ID && (len(d.Links) != 1 || d.Links[0] != child.ID) {
+			t.Fatalf("links: %+v", d)
+		}
+		if d.ID == child.ID && d.Parent != parent.ID {
+			t.Fatalf("child's parent: %+v", d)
 		}
 	}
 	var got readOut

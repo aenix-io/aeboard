@@ -219,3 +219,65 @@ func Unlink(state []byte, child string) ([]byte, error) {
 		}
 	}), nil
 }
+
+// Retarget points the document's links to from at to instead: references
+// in text and linked or synced doc cards. A shortcut turned into a copy of
+// its own keeps its place this way.
+func Retarget(state []byte, from, to string) ([]byte, error) {
+	d, err := Load(state)
+	if err != nil {
+		return nil, err
+	}
+	type textRef struct {
+		text      *crdt.YText
+		at, n     int
+		reference map[string]any
+	}
+	var texts []textRef
+	var cards []*crdt.YMap
+	for _, p := range positions(d.Root) {
+		b := p.block
+		m, ok := d.ymap(b.ID)
+		if !ok {
+			continue
+		}
+		if b.Flavour == "affine:embed-linked-doc" || b.Flavour == "affine:embed-synced-doc" {
+			if id, _ := b.Props["pageId"].(string); id == from {
+				cards = append(cards, m)
+			}
+			continue
+		}
+		v, _ := m.Get("prop:text")
+		yt, ok := v.(*crdt.YText)
+		if !ok {
+			continue
+		}
+		pos := 0
+		for _, op := range b.Text {
+			s, _ := op.Insert.(string)
+			n := utf16Len(s)
+			if ref, ok := op.Attributes["reference"].(map[string]any); ok {
+				if id, _ := ref["pageId"].(string); id == from {
+					next := map[string]any{}
+					for k, v := range ref {
+						next[k] = v
+					}
+					next["pageId"] = to
+					texts = append(texts, textRef{text: yt, at: pos, n: n, reference: next})
+				}
+			}
+			pos += n
+		}
+	}
+	if len(texts) == 0 && len(cards) == 0 {
+		return nil, nil
+	}
+	return d.transact(func(txn *crdt.Transaction) {
+		for _, r := range texts {
+			r.text.Format(txn, r.at, r.n, crdt.Attributes{"reference": r.reference})
+		}
+		for _, m := range cards {
+			m.Set(txn, "prop:pageId", to)
+		}
+	}), nil
+}

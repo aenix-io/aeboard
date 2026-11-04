@@ -302,3 +302,25 @@ func TestMoveChildren(t *testing.T) {
 		t.Fatalf("after remove: %s", got)
 	}
 }
+
+// A document is created inside another, and a shortcut becomes a copy.
+func TestParentsAndCopies(t *testing.T) {
+	ts := newTestServer(t)
+	var p, c, cp boards.Meta
+	_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"P"}`)
+	_ = json.Unmarshal([]byte(body), &p)
+	code, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"C","parent":"`+p.ID+`"}`)
+	_ = json.Unmarshal([]byte(body), &c)
+	if code != http.StatusCreated || c.Parent != p.ID {
+		t.Fatalf("create inside: %d %s", code, body)
+	}
+	if code, body := do(t, "PATCH", ts.URL+"/api/v1/boards/"+p.ID, `{"parent":"`+c.ID+`"}`); code != http.StatusBadRequest {
+		t.Fatalf("parent into its child: %d %s", code, body)
+	}
+	_, _ = do(t, "POST", ts.URL+"/api/v1/boards/"+p.ID+"/children", `{"doc":"`+c.ID+`"}`)
+	code, body = do(t, "POST", ts.URL+"/api/v1/boards/"+c.ID+"/copy", `{"into":"`+p.ID+`"}`)
+	_ = json.Unmarshal([]byte(body), &cp)
+	if code != http.StatusCreated || cp.Parent != p.ID || cp.ID == c.ID {
+		t.Fatalf("copy: %d %s", code, body)
+	}
+}

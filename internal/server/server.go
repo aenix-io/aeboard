@@ -121,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
 	mux.HandleFunc("DELETE /api/v1/boards/{id}", s.deleteBoard)
 	mux.HandleFunc("POST /api/v1/boards/{id}/children", s.addChild)
+	mux.HandleFunc("POST /api/v1/boards/{id}/copy", s.copyBoard)
 	mux.HandleFunc("DELETE /api/v1/boards/{id}/children/{child}", s.removeChild)
 	mux.HandleFunc("POST /api/v1/folders", s.createFolder)
 	mux.HandleFunc("PATCH /api/v1/folders/{id}", s.patchFolder)
@@ -209,13 +210,14 @@ func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
 		Mode   string `json:"mode"`
 		Title  string `json:"title"`
 		Folder string `json:"folder"`
+		Parent string `json:"parent"`
 		Blank  bool   `json:"blank"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Folder: in.Folder, Blank: in.Blank}, s.login(r))
+	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Folder: in.Folder, Parent: in.Parent, Blank: in.Blank}, s.login(r))
 	if errors.Is(err, boards.ErrExists) {
 		writeError(w, http.StatusConflict, "a document with this id exists")
 		return
@@ -291,6 +293,25 @@ func (s *Server) addChild(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sendLive(r, parent, upd)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// copyBoard makes a separate copy of a document inside another one, where a
+// shortcut to it was: the shortcut's link now points at the copy.
+func (s *Server) copyBoard(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Into string `json:"into"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	m, upd, err := s.store.Copy(r.PathValue("id"), in.Into, s.login(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.sendLive(r, in.Into, upd)
+	writeJSON(w, http.StatusCreated, m)
 }
 
 // removeChild takes a document out of another one: its link lines go from

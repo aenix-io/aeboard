@@ -21,12 +21,12 @@ type tools struct{ Deps }
 
 func registerTools(s *mcp.Server, d Deps) {
 	t := &tools{d}
-	mcp.AddTool(s, &mcp.Tool{Name: "list_documents", Description: "List every folder and document: the folder tree (id, name, parent) and each document's id, title, mode (page = a rich-text document, edgeless = a whiteboard), folder, URL and children. A document's children are the documents it links to — that is how documents nest, as in AFFiNE: linking to a document from another one puts it inside. Start here to find what to read."}, t.list)
+	mcp.AddTool(s, &mcp.Tool{Name: "list_documents", Description: "List every folder and document: the folder tree (id, name, parent) and each document's id, title, mode (page = a rich-text document, edgeless = a whiteboard), folder, parent, URL and links. Every document has one home: a folder (or the top level) or a parent document it lives inside. A document's links to others show inside it as shortcuts; the documents whose parent it is are its own children. Start here to find what to read."}, t.list)
 	mcp.AddTool(s, &mcp.Tool{Name: "search_documents", Description: "Find documents whose title or text contains the query (case-insensitive). Returns the matches with a snippet around the first hit in the text."}, t.search)
 	mcp.AddTool(s, &mcp.Tool{Name: "read_document", Description: "Read one document as Markdown, with its title, mode, folder path and URL. For a page this is its text top to bottom; for a board it is the text of every note on the canvas, then the text written on shapes. Links to other documents are rendered as [Title](URL)."}, t.read)
-	mcp.AddTool(s, &mcp.Tool{Name: "create_document", Description: "Create a page (mode=page, the default) or a board (mode=edgeless) with a title, optionally inside a folder, optionally with initial content as Markdown (headings, paragraphs, bold/italic/strike/code, links, bulleted/numbered/task lists, code blocks, quotes, dividers). A Markdown link to another document's URL becomes a live link to it (and makes that document a child of this one). On a board, the content goes into a note on the canvas. Pass parent to create the document inside another one."}, t.create)
+	mcp.AddTool(s, &mcp.Tool{Name: "create_document", Description: "Create a page (mode=page, the default) or a board (mode=edgeless) with a title, optionally inside a folder, optionally with initial content as Markdown (headings, paragraphs, bold/italic/strike/code, links, bulleted/numbered/task lists, code blocks, quotes, dividers). A Markdown link to another document's URL becomes a live link to it (a shortcut to it in the tree). On a board, the content goes into a note on the canvas. Pass parent to create the document inside another one (a link to it is added at the end of the parent)."}, t.create)
 	mcp.AddTool(s, &mcp.Tool{Name: "append_to_document", Description: "Add Markdown content to the end of a page, or as a new note on a board (placed to the right of what is already there). Existing content is never changed. People who have the document open see it at once."}, t.appendTo)
-	mcp.AddTool(s, &mcp.Tool{Name: "update_document", Description: "Rename a document (title) and/or move it to another folder (folder; \"\" is the top level). Only the fields given change."}, t.update)
+	mcp.AddTool(s, &mcp.Tool{Name: "update_document", Description: "Rename a document (title) and/or move it: into a folder (folder; \"\" is the top level) or inside another document (parent). Only the fields given change."}, t.update)
 	mcp.AddTool(s, &mcp.Tool{Name: "trash_document", Description: "Move a document to the trash. It disappears from the tree and the lists but is kept whole: restore_document brings it back where it was. Links to it in other documents are left as they are. Only a person can delete a document for good, from the trash."}, t.trash(true))
 	mcp.AddTool(s, &mcp.Tool{Name: "restore_document", Description: "Bring a document back from the trash."}, t.trash(false))
 	mcp.AddTool(s, &mcp.Tool{Name: "create_folder", Description: "Create a folder, at the top level or inside another folder (parent)."}, t.createFolder)
@@ -45,9 +45,12 @@ type Document struct {
 	Updated time.Time `json:"updated"`
 	// Trashed is set for a document in the trash.
 	Trashed bool `json:"trashed,omitempty"`
-	// Children are the documents this one links to: what the sidebar shows
-	// inside it.
-	Children []string `json:"children,omitempty"`
+	// Parent is the document this one lives inside ("" when its home is
+	// a folder or the top level).
+	Parent string `json:"parent,omitempty"`
+	// Links are the documents this one links to; those living elsewhere
+	// show inside it as shortcuts.
+	Links []string `json:"links,omitempty"`
 }
 
 // FolderInfo is a folder as the tools show it.
@@ -60,7 +63,7 @@ type FolderInfo struct {
 func (t *tools) url(id string) string { return t.BaseURL + "/b/" + id }
 
 func (t *tools) doc(m boards.Meta) Document {
-	return Document{ID: m.ID, Title: titleOr(m.Title), Mode: m.Mode, Folder: t.Store.FolderOf(m), URL: t.url(m.ID), Updated: m.Updated, Trashed: !m.Trashed.IsZero()}
+	return Document{ID: m.ID, Title: titleOr(m.Title), Mode: m.Mode, Folder: t.Store.FolderOf(m), URL: t.url(m.ID), Updated: m.Updated, Trashed: !m.Trashed.IsZero(), Parent: m.Parent}
 }
 
 func titleOr(s string) string {
@@ -96,7 +99,7 @@ func (t *tools) list(_ context.Context, _ *mcp.CallToolRequest, _ listIn) (*mcp.
 			continue
 		}
 		d := t.doc(m)
-		d.Children = links[m.ID]
+		d.Links = links[m.ID]
 		out.Documents = append(out.Documents, d)
 	}
 	return nil, out, nil
@@ -255,7 +258,7 @@ type createIn struct {
 	Title    string `json:"title"`
 	Mode     string `json:"mode,omitempty" jsonschema:"page (default) or edgeless (a whiteboard)"`
 	Folder   string `json:"folder,omitempty" jsonschema:"the folder's id; empty is the top level"`
-	Parent   string `json:"parent,omitempty" jsonschema:"a document to create this one inside: a link to it is added at the end of that document, which makes it a child there"`
+	Parent   string `json:"parent,omitempty" jsonschema:"a document to create this one inside; a link to it is added at the end of that document"`
 	Markdown string `json:"markdown,omitempty" jsonschema:"initial content"`
 }
 
@@ -273,7 +276,7 @@ func (t *tools) create(ctx context.Context, _ *mcp.CallToolRequest, in createIn)
 			return nil, Document{}, notFound(in.Parent, err)
 		}
 	}
-	m, err := t.Store.Create(boards.CreateInput{Mode: in.Mode, Title: in.Title, Folder: in.Folder}, login)
+	m, err := t.Store.Create(boards.CreateInput{Mode: in.Mode, Title: in.Title, Folder: in.Folder, Parent: parent}, login)
 	if err != nil {
 		return nil, Document{}, err
 	}
@@ -337,6 +340,7 @@ type updateIn struct {
 	ID     string  `json:"id"`
 	Title  *string `json:"title,omitempty"`
 	Folder *string `json:"folder,omitempty" jsonschema:"the folder's id; empty is the top level"`
+	Parent *string `json:"parent,omitempty" jsonschema:"a document to move this one inside"`
 }
 
 func (t *tools) update(ctx context.Context, _ *mcp.CallToolRequest, in updateIn) (*mcp.CallToolResult, Document, error) {
@@ -345,7 +349,7 @@ func (t *tools) update(ctx context.Context, _ *mcp.CallToolRequest, in updateIn)
 		return nil, Document{}, err
 	}
 	id := docID(in.ID)
-	m, upd, err := t.Store.Update(id, boards.Patch{Title: in.Title, Folder: in.Folder}, login)
+	m, upd, err := t.Store.Update(id, boards.Patch{Title: in.Title, Folder: in.Folder, Parent: in.Parent}, login)
 	if err != nil {
 		return nil, Document{}, notFound(in.ID, err)
 	}
