@@ -12,6 +12,18 @@ export type Dragged = { kind: 'doc' | 'folder'; id: string };
 
 export const DRAG_TYPE = 'application/x-aenotes-item';
 
+const EXPECT_CHILD = 'aenotes:expect-child';
+/** How long a link announced by expectChild is shown before the server
+ *  must have it. */
+const EXPECT_MS = 15_000;
+
+/** expectChild announces that child is about to be linked from parent (a
+ *  document the editor creates from inside another): the catalog shows it
+ *  there until the server's own list has the link. */
+export function expectChild(parent: string, child: string): void {
+  window.dispatchEvent(new CustomEvent(EXPECT_CHILD, { detail: { parent, child } }));
+}
+
 export function dragData(e: React.DragEvent): Dragged | null {
   try {
     const v = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)) as Dragged;
@@ -112,7 +124,29 @@ export function CatalogProvider({
     if (version !== undefined) reload();
   }, [version, reload]);
 
-  const docs = useMemo(() => all?.filter(d => !d.trashed) ?? null, [all]);
+  // Links announced by expectChild, by child, with when they expire.
+  const [expected, setExpected] = useState<Map<string, { parent: string; until: number }>>(new Map());
+  useEffect(() => {
+    const on = (e: Event) => {
+      const { parent, child } = (e as CustomEvent<{ parent: string; child: string }>).detail;
+      setExpected(m => new Map(m).set(child, { parent, until: Date.now() + EXPECT_MS }));
+      setTimeout(() => setExpected(m => (m.has(child) ? new Map([...m].filter(([c]) => c !== child)) : m)), EXPECT_MS);
+    };
+    window.addEventListener(EXPECT_CHILD, on);
+    return () => window.removeEventListener(EXPECT_CHILD, on);
+  }, []);
+
+  const docs = useMemo(() => {
+    const live = all?.filter(d => !d.trashed) ?? null;
+    if (!live || expected.size === 0) return live;
+    const now = Date.now();
+    return live.map(d => {
+      const add = [...expected]
+        .filter(([c, x]) => x.parent === d.id && x.until > now && !(d.links ?? []).includes(c))
+        .map(([c]) => c);
+      return add.length ? { ...d, links: [...(d.links ?? []), ...add] } : d;
+    });
+  }, [all, expected]);
   const trash = useMemo(
     () => (all ?? []).filter(d => d.trashed).sort((a, b) => (b.trashed ?? '').localeCompare(a.trashed ?? '')),
     [all],
