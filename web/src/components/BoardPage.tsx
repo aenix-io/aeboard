@@ -39,6 +39,7 @@ function DocPath({ id }: { id: string }) {
     cat.setTrail(null);
     navigate(`/b/${doc}`);
   };
+  if (path.length === 0) return null;
   return (
     <nav className="doc-crumbs" aria-label="Path">
       {path.map(c => (
