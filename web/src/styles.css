@@ -208,7 +208,7 @@ a.button.primary:hover { filter: brightness(0.95); }
 .sb-icon-button { width: 22px; height: 22px; padding: 0; border: none; background: none; color: var(--muted); font-size: 15px; line-height: 1; border-radius: 4px; }
 .sb-icon-button:hover { background: rgba(55, 53, 47, 0.1); color: var(--fg); }
 .sb-menu { position: relative; }
-.sb-menu-list { top: 24px; right: 0; }
+.sb-menu-list { right: auto; z-index: 60; }
 .sb-empty { color: var(--faint); padding: 4px 8px; font-size: 12px; }
 .app .sb-input { width: 100%; padding: 2px 6px; font-size: 13px; }
 .sb-error { padding: 6px 12px; font-size: 12px; }
