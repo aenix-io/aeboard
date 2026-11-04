@@ -244,7 +244,11 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
           </>
         )}
         {board && canWrite && (
-          <>
+          <span className="title-wrap">
+            {/* The hidden copy of the text sizes the field to it. */}
+            <span className="title-sizer" aria-hidden="true">
+              {title || untitled(board.mode)}
+            </span>
             <input
               className="title-input"
               value={title}
@@ -260,7 +264,7 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
               }}
               onBlur={() => title !== board.title && save({ title })}
             />
-          </>
+          </span>
         )}
         {board && <ToOriginal id={id} />}
         {error && board && <span className="error">{error}</span>}
