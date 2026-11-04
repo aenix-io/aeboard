@@ -210,3 +210,117 @@ func TestShutdownEndsStatusStreams(t *testing.T) {
 		t.Fatalf("shutdown with an open stream: %v", err)
 	}
 }
+
+// A document put inside another shows in the catalog as its link.
+func TestAddChild(t *testing.T) {
+	ts := newTestServer(t)
+	var parent, child boards.Meta
+	_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"Parent"}`)
+	_ = json.Unmarshal([]byte(body), &parent)
+	_, body = do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"Child"}`)
+	_ = json.Unmarshal([]byte(body), &child)
+
+	if code, body := do(t, "POST", ts.URL+"/api/v1/boards/"+parent.ID+"/children", `{"doc":"`+child.ID+`"}`); code != http.StatusNoContent {
+		t.Fatalf("add child: %d %s", code, body)
+	}
+	if code, _ := do(t, "POST", ts.URL+"/api/v1/boards/"+parent.ID+"/children", `{"doc":"nosuchdoc0"}`); code != http.StatusNotFound {
+		t.Fatalf("missing child: %d", code)
+	}
+	_, body = do(t, "GET", ts.URL+"/api/v1/boards", "")
+	var list struct {
+		Boards []struct {
+			ID    string   `json:"id"`
+			Links []string `json:"links"`
+		} `json:"boards"`
+	}
+	_ = json.Unmarshal([]byte(body), &list)
+	for _, b := range list.Boards {
+		if b.ID == parent.ID && (len(b.Links) != 1 || b.Links[0] != child.ID) {
+			t.Fatalf("parent links: %v", b.Links)
+		}
+	}
+}
+
+// Trash, restore and delete for good over the API.
+func TestTrashOverTheAPI(t *testing.T) {
+	ts := newTestServer(t)
+	var m boards.Meta
+	_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"Old"}`)
+	_ = json.Unmarshal([]byte(body), &m)
+	if code, _ := do(t, "DELETE", ts.URL+"/api/v1/boards/"+m.ID, ""); code != http.StatusConflict {
+		t.Fatalf("delete before trash: %d", code)
+	}
+	if code, body := do(t, "PATCH", ts.URL+"/api/v1/boards/"+m.ID, `{"trashed":true}`); code != http.StatusOK || !strings.Contains(body, `"trashed":`) {
+		t.Fatalf("trash: %d %s", code, body)
+	}
+	if code, _ := do(t, "DELETE", ts.URL+"/api/v1/boards/"+m.ID, ""); code != http.StatusNoContent {
+		t.Fatalf("delete: %d", code)
+	}
+	if code, _ := do(t, "GET", ts.URL+"/api/v1/boards/"+m.ID, ""); code != http.StatusNotFound {
+		t.Fatalf("get after delete: %d", code)
+	}
+}
+
+// Children are reordered and taken out over the API.
+func TestMoveChildren(t *testing.T) {
+	ts := newTestServer(t)
+	mk := func(title string) string {
+		var m boards.Meta
+		_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"`+title+`"}`)
+		_ = json.Unmarshal([]byte(body), &m)
+		return m.ID
+	}
+	p, a, b := mk("P"), mk("A"), mk("B")
+	for _, body := range []string{`{"doc":"` + a + `"}`, `{"doc":"` + b + `","before":"` + a + `"}`} {
+		if code, msg := do(t, "POST", ts.URL+"/api/v1/boards/"+p+"/children", body); code != http.StatusNoContent {
+			t.Fatalf("%s: %d %s", body, code, msg)
+		}
+	}
+	links := func() string {
+		_, body := do(t, "GET", ts.URL+"/api/v1/boards", "")
+		var l struct {
+			Boards []struct {
+				ID    string   `json:"id"`
+				Links []string `json:"links"`
+			} `json:"boards"`
+		}
+		_ = json.Unmarshal([]byte(body), &l)
+		for _, d := range l.Boards {
+			if d.ID == p {
+				return strings.Join(d.Links, ",")
+			}
+		}
+		return ""
+	}
+	if got := links(); got != b+","+a {
+		t.Fatalf("order: %s", got)
+	}
+	if code, _ := do(t, "DELETE", ts.URL+"/api/v1/boards/"+p+"/children/"+b, ""); code != http.StatusNoContent {
+		t.Fatalf("remove: %d", code)
+	}
+	if got := links(); got != a {
+		t.Fatalf("after remove: %s", got)
+	}
+}
+
+// A document is created inside another, and a shortcut becomes a copy.
+func TestParentsAndCopies(t *testing.T) {
+	ts := newTestServer(t)
+	var p, c, cp boards.Meta
+	_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"P"}`)
+	_ = json.Unmarshal([]byte(body), &p)
+	code, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"C","parent":"`+p.ID+`"}`)
+	_ = json.Unmarshal([]byte(body), &c)
+	if code != http.StatusCreated || c.Parent != p.ID {
+		t.Fatalf("create inside: %d %s", code, body)
+	}
+	if code, body := do(t, "PATCH", ts.URL+"/api/v1/boards/"+p.ID, `{"parent":"`+c.ID+`"}`); code != http.StatusBadRequest {
+		t.Fatalf("parent into its child: %d %s", code, body)
+	}
+	_, _ = do(t, "POST", ts.URL+"/api/v1/boards/"+p.ID+"/children", `{"doc":"`+c.ID+`"}`)
+	code, body = do(t, "POST", ts.URL+"/api/v1/boards/"+c.ID+"/copy", `{"into":"`+p.ID+`"}`)
+	_ = json.Unmarshal([]byte(body), &cp)
+	if code != http.StatusCreated || cp.Parent != p.ID || cp.ID == c.ID {
+		t.Fatalf("copy: %d %s", code, body)
+	}
+}

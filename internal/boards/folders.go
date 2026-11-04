@@ -212,8 +212,10 @@ func (s *Store) DeleteFolder(id string) error {
 		s.mu.Unlock()
 		return ErrNotFound
 	}
+	// Documents in the trash do not count: the folder looks empty, and a
+	// trashed one restored later shows at the top level (see FolderOf).
 	for _, b := range s.boards {
-		if b.meta.Folder == id {
+		if b.meta.Folder == id && b.meta.Trashed.IsZero() && !b.meta.Deleted {
 			s.mu.Unlock()
 			return ErrNotEmpty
 		}

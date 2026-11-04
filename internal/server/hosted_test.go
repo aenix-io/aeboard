@@ -134,6 +134,13 @@ type hosted struct {
 
 func newHosted(t *testing.T, mod func(*OAuthConfig)) *hosted {
 	t.Helper()
+	return newHostedWith(t, mod, nil)
+}
+
+// newHostedWith is newHosted with a last word on the server before its
+// handler is built (e.g. the MCP tool set a test observes).
+func newHostedWith(t *testing.T, mod func(*OAuthConfig), prep func(*Server)) *hosted {
+	t.Helper()
 	gh := newFakeGitHub(t)
 	dir := t.TempDir()
 	store, err := boards.Open(context.Background(), boards.DirBackend{Root: dir})
@@ -169,6 +176,9 @@ func newHosted(t *testing.T, mod func(*OAuthConfig)) *hosted {
 	}
 	srv.auth.authorizeURL = gh.URL + "/login/oauth/authorize"
 	srv.auth.tokenURL = gh.URL + "/login/oauth/access_token"
+	if prep != nil {
+		prep(srv)
+	}
 	h.ts.Config.Handler = srv.Handler()
 	h.ts.Start()
 	t.Cleanup(h.ts.Close)

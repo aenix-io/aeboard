@@ -27,6 +27,7 @@ import (
 
 	"github.com/reearth/ygo/crdt"
 
+	"github.com/aenix-io/aenotes/internal/blocks"
 	"github.com/aenix-io/aenotes/internal/seed"
 )
 
@@ -43,11 +44,22 @@ type Meta struct {
 	Title string `json:"title"`
 	// Folder is the folder the document is in; "" is the top level.
 	Folder string `json:"folder"`
+	// Parent is the document this one lives inside, when it does (then
+	// Folder is ""): every document has one home, a folder or a document.
+	// Links to it from other documents are shortcuts.
+	Parent string `json:"parent,omitempty"`
 	// Rank orders the document among its folder's contents (see ValidRank);
 	// "" sorts after the ranked ones, by title.
 	Rank    string    `json:"rank,omitempty"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
+	// Trashed is when the document was moved to the trash (zero: it is
+	// not). A trashed document is kept whole and can be restored.
+	Trashed time.Time `json:"trashed,omitzero"`
+	// Deleted marks a document deleted for good: only this metadata stays,
+	// as a tombstone, so a merge with a replica that still has the document
+	// does not bring it back.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // Document modes.
@@ -70,6 +82,8 @@ type CreateInput struct {
 	Mode   string
 	Title  string
 	Folder string
+	// Parent creates the document inside another one.
+	Parent string
 	// Blank starts the document with no blocks at all instead of the seed:
 	// the editor's "new doc" path (BlockSuite's createDefaultDoc) builds the
 	// root blocks itself in the creating browser, and a seed under them
@@ -84,10 +98,18 @@ var emptyUpdate = []byte{0, 0}
 // Patch changes a board's metadata; nil fields are left as they are.
 type Patch struct {
 	Title *string `json:"title,omitempty"`
-	// Folder moves the document ("" is the top level).
+	// Folder moves the document into a folder ("" is the top level), out of
+	// any parent document.
 	Folder *string `json:"folder,omitempty"`
+	// Parent moves the document inside another one ("" takes it out, to
+	// the folder level).
+	Parent *string `json:"parent,omitempty"`
 	// Rank places it among its folder's contents.
 	Rank *string `json:"rank,omitempty"`
+	// Trashed moves the document to the trash (true) or restores it.
+	Trashed *bool `json:"trashed,omitempty"`
+	// Mode is how the document opens by default (edgeless or page).
+	Mode *string `json:"mode,omitempty"`
 }
 
 // Snapshot is one board as a backend stores it.
@@ -144,6 +166,9 @@ type board struct {
 	editors    map[string]bool
 	// gen counts changes, so a flush that raced an edit leaves it dirty.
 	gen uint64
+	// links are the documents this one links to (see blocks.Doc.Links),
+	// derived from the state and kept in memory only.
+	links []string
 }
 
 // Open loads every board from the backend.
@@ -173,6 +198,7 @@ func Open(ctx context.Context, backend Backend) (*Store, error) {
 				}
 			}
 		}
+		b.links = linksOf(b.meta.ID, b.state)
 		s.boards[b.meta.ID] = b
 	}
 	if fb, ok := backend.(FolderBackend); ok {
@@ -199,7 +225,9 @@ func (s *Store) List() []Meta {
 	defer s.mu.Unlock()
 	out := make([]Meta, 0, len(s.boards))
 	for _, b := range s.boards {
-		out = append(out, cloneMeta(b.meta))
+		if !b.meta.Deleted {
+			out = append(out, cloneMeta(b.meta))
+		}
 	}
 	slices.SortFunc(out, func(a, b Meta) int {
 		if c := b.Updated.Compare(a.Updated); c != 0 {
@@ -214,7 +242,7 @@ func (s *Store) List() []Meta {
 func (s *Store) Get(id string) (Meta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		return Meta{}, ErrNotFound
 	}
@@ -261,6 +289,13 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 		s.mu.Unlock()
 		return Meta{}, fmt.Errorf("%w: no folder %q", ErrInvalid, in.Folder)
 	}
+	if in.Parent != "" {
+		if _, ok := s.liveLocked(in.Parent); !ok {
+			s.mu.Unlock()
+			return Meta{}, fmt.Errorf("%w: no document %q", ErrInvalid, in.Parent)
+		}
+		in.Folder = ""
+	}
 	id := in.ID
 	if id == "" {
 		id = newID()
@@ -273,9 +308,10 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 	}
 	now := s.now().UTC()
 	b := &board{
-		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Folder: in.Folder, Created: now, Updated: now},
+		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Folder: in.Folder, Parent: in.Parent, Created: now, Updated: now},
 		state: state,
 	}
+	b.links = linksOf(id, state)
 	s.boards[id] = b
 	s.catalogVersion++
 	s.markLocked(b, actor)
@@ -290,7 +326,7 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 // the document's live room must be sent.
 func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 	s.mu.Lock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		s.mu.Unlock()
 		return Meta{}, nil, ErrNotFound
@@ -327,12 +363,39 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 		}
 		m.Rank = *p.Rank
 	}
+	if p.Mode != nil {
+		if *p.Mode != ModeEdgeless && *p.Mode != ModePage {
+			s.mu.Unlock()
+			return Meta{}, nil, fmt.Errorf("%w: mode %q", ErrInvalid, *p.Mode)
+		}
+		m.Mode = *p.Mode
+	}
+	if p.Trashed != nil {
+		if *p.Trashed {
+			if m.Trashed.IsZero() {
+				m.Trashed = s.now().UTC()
+			}
+		} else {
+			m.Trashed = time.Time{}
+		}
+	}
 	if p.Folder != nil {
 		if !s.liveFolderLocked(*p.Folder) {
 			s.mu.Unlock()
 			return Meta{}, nil, fmt.Errorf("%w: no folder %q", ErrInvalid, *p.Folder)
 		}
 		m.Folder = *p.Folder
+		m.Parent = ""
+	}
+	if p.Parent != nil && *p.Parent != "" {
+		if err := s.canHoldLocked(*p.Parent, id); err != nil {
+			s.mu.Unlock()
+			return Meta{}, nil, err
+		}
+		m.Parent = *p.Parent
+		m.Folder = ""
+	} else if p.Parent != nil {
+		m.Parent = ""
 	}
 	m.Updated = s.now().UTC()
 	b.meta = m
@@ -349,7 +412,7 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 func (s *Store) LoadState(id string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		return nil, ErrNotFound
 	}
@@ -365,7 +428,7 @@ func (s *Store) LoadState(id string) ([]byte, error) {
 // are the logins the change is attributed to.
 func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, error) {
 	s.mu.Lock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		s.mu.Unlock()
 		return false, ErrNotFound
@@ -384,7 +447,8 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 		return false, nil
 	}
 	b.state = merged
-	if t := DocTitle(merged); t != b.meta.Title {
+	// One reading of the state gives both the title and the links.
+	if t := s.relinkLocked(b); t != b.meta.Title {
 		b.meta.Title = t
 		s.catalogVersion++
 	}
@@ -422,11 +486,27 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 		if !ok {
 			m := r.Meta
 			normMeta(&m)
-			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State)}
+			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State), links: linksOf(id, r.State)}
 			s.catalogVersion++
 			continue
 		}
-		if r.Meta.Updated.After(b.meta.Updated) {
+		newer := r.Meta.Updated.After(b.meta.Updated)
+		switch {
+		case b.meta.Deleted && !newer:
+			// Deleted here after what the remote has: it stays deleted.
+			continue
+		case r.Meta.Deleted && newer:
+			// Deleted there after what we have.
+			b.meta = r.Meta
+			b.state = nil
+			b.links = nil
+			s.catalogVersion++
+			continue
+		case r.Meta.Deleted:
+			// A remote tombstone older than our edits: ours stands.
+			continue
+		}
+		if newer {
 			m := r.Meta
 			normMeta(&m)
 			b.meta = m
@@ -451,13 +531,235 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			return gained, fmt.Errorf("board %s: %w", id, err)
 		}
 		b.state = merged
-		if t := DocTitle(merged); t != "" && t != b.meta.Title {
+		if t := s.relinkLocked(b); t != "" && t != b.meta.Title {
 			b.meta.Title = t
 			s.catalogVersion++
 		}
 		gained[id] = diff
 	}
 	return gained, nil
+}
+
+// Append adds blocks at the end of a document: a page gets them below its
+// text, a board as a new note on the canvas. It returns the update, for the
+// document's live room.
+func (s *Store) Append(id string, specs []blocks.Spec, actor string) ([]byte, error) {
+	m, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.LoadState(id)
+	if err != nil {
+		return nil, err
+	}
+	var upd []byte
+	if m.Mode == ModePage {
+		upd, err = blocks.AppendToPage(state, specs)
+	} else {
+		upd, err = blocks.AddBoardNote(state, specs)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// The update merges as a CRDT, so an edit that lands in between is kept.
+	if _, err := s.ApplyUpdate(id, upd, actor); err != nil {
+		return nil, err
+	}
+	return upd, nil
+}
+
+// Link makes child a child of parent the way AFFiNE does: a line with a
+// reference to it at the end of parent's body. A child it already links to
+// is left alone (nil update).
+func (s *Store) Link(parent, child, actor string) ([]byte, error) {
+	return s.PlaceChild(parent, child, blocks.Place{}, actor)
+}
+
+// PlaceChild puts child inside parent at place among parent's children —
+// moving its link line there when it has one, adding one when not.
+func (s *Store) PlaceChild(parent, child string, place blocks.Place, actor string) ([]byte, error) {
+	if parent == child {
+		return nil, fmt.Errorf("%w: a document cannot hold itself", ErrInvalid)
+	}
+	if _, err := s.Get(child); err != nil {
+		return nil, err
+	}
+	return s.editState(parent, actor, func(state []byte) ([]byte, error) {
+		return blocks.PlaceLink(state, child, place)
+	})
+}
+
+// Copy makes a separate document from id, inside into, with the same
+// content, and points into's links to id at the copy: a shortcut becomes a
+// document of its own there. It returns the copy and the update for into.
+func (s *Store) Copy(id, into, actor string) (Meta, []byte, error) {
+	// Where the copy goes is checked first: a copy left behind by a failed
+	// call would be a stray document.
+	if into == "" || into == id {
+		return Meta{}, nil, fmt.Errorf("%w: a copy goes inside another document", ErrInvalid)
+	}
+	if _, err := s.Get(into); err != nil {
+		return Meta{}, nil, err
+	}
+	src, err := s.Get(id)
+	if err != nil {
+		return Meta{}, nil, err
+	}
+	state, err := s.LoadState(id)
+	if err != nil {
+		return Meta{}, nil, err
+	}
+	m, err := s.Create(CreateInput{Mode: src.Mode, Parent: into, Blank: false}, actor)
+	if err != nil {
+		return Meta{}, nil, err
+	}
+	// The copy's own state is the source's: same blocks, same title.
+	s.mu.Lock()
+	b := s.boards[m.ID]
+	b.state = bytes.Clone(state)
+	b.meta.Title = src.Title
+	b.links = linksOf(m.ID, b.state)
+	s.catalogVersion++
+	s.markLocked(b, actor)
+	m = cloneMeta(b.meta)
+	s.mu.Unlock()
+	s.notify()
+	upd, err := s.editState(into, actor, func(st []byte) ([]byte, error) {
+		return blocks.Retarget(st, id, m.ID)
+	})
+	return m, upd, err
+}
+
+// ErrInlineLink is returned for taking a child out of a document that
+// mentions it in its text: that link is the author's to remove.
+var ErrInlineLink = blocks.ErrInlineLink
+
+// Unlink takes child out of parent: the link lines and cards for it go
+// from parent's body (nil update when there are none).
+func (s *Store) Unlink(parent, child, actor string) ([]byte, error) {
+	return s.editState(parent, actor, func(state []byte) ([]byte, error) {
+		return blocks.Unlink(state, child)
+	})
+}
+
+// editState applies what edit makes of a document's state (nil: nothing).
+func (s *Store) editState(id, actor string, edit func([]byte) ([]byte, error)) ([]byte, error) {
+	state, err := s.LoadState(id)
+	if err != nil {
+		return nil, err
+	}
+	upd, err := edit(state)
+	if err != nil || upd == nil {
+		return nil, err
+	}
+	// The update merges as a CRDT, so an edit that lands in between is kept.
+	if _, err := s.ApplyUpdate(id, upd, actor); err != nil {
+		return nil, err
+	}
+	return upd, nil
+}
+
+// ErrNotTrashed is returned for deleting a document for good that is not
+// in the trash.
+var ErrNotTrashed = errors.New("only a document in the trash can be deleted")
+
+// Delete removes a trashed document for good. What stays is a tombstone
+// (its metadata, marked deleted): replicas that still have the document
+// learn it is gone instead of bringing it back. Links to it in other
+// documents are left as they are.
+func (s *Store) Delete(id, actor string) error {
+	s.mu.Lock()
+	b, ok := s.liveLocked(id)
+	if !ok {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	if b.meta.Trashed.IsZero() {
+		s.mu.Unlock()
+		return ErrNotTrashed
+	}
+	b.meta = Meta{ID: id, Mode: b.meta.Mode, Created: b.meta.Created, Updated: s.now().UTC(), Trashed: b.meta.Trashed, Deleted: true}
+	b.state = nil
+	b.links = nil
+	s.catalogVersion++
+	s.markLocked(b, actor)
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+// canHoldLocked reports whether parent may hold doc: it is there, and it
+// is neither doc nor inside doc (no document goes inside itself).
+func (s *Store) canHoldLocked(parent, doc string) error {
+	if _, ok := s.liveLocked(parent); !ok {
+		return fmt.Errorf("%w: no document %q", ErrInvalid, parent)
+	}
+	seen := map[string]bool{}
+	for at := parent; at != "" && !seen[at]; {
+		if at == doc {
+			return fmt.Errorf("%w: a document cannot go inside itself", ErrInvalid)
+		}
+		seen[at] = true
+		b := s.boards[at]
+		if b == nil {
+			break
+		}
+		at = b.meta.Parent
+	}
+	return nil
+}
+
+// liveLocked is a document that is there (not deleted for good).
+func (s *Store) liveLocked(id string) (*board, bool) {
+	b, ok := s.boards[id]
+	if !ok || b.meta.Deleted {
+		return nil, false
+	}
+	return b, true
+}
+
+// Links returns, per document, the documents it links to in order of
+// appearance (documents that link to nothing are left out).
+func (s *Store) Links() map[string][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string][]string{}
+	for id, b := range s.boards {
+		if len(b.links) > 0 {
+			out[id] = slices.Clone(b.links)
+		}
+	}
+	return out
+}
+
+// relinkLocked rederives a board's links after its state changed (a change
+// bumps the catalog version, so clients redraw the tree) and returns the
+// title written in the state, read on the same pass.
+func (s *Store) relinkLocked(b *board) string {
+	title, l := docInfo(b.meta.ID, b.state)
+	if !slices.Equal(l, b.links) {
+		b.links = l
+		s.catalogVersion++
+	}
+	return title
+}
+
+// linksOf is what the document id links to, a link to itself left out.
+func linksOf(id string, state []byte) []string {
+	_, l := docInfo(id, state)
+	return l
+}
+
+// docInfo reads a state once for its title and its links.
+func docInfo(id string, state []byte) (string, []string) {
+	if len(state) == 0 {
+		return "", nil
+	}
+	d, err := blocks.Load(state)
+	if err != nil {
+		return "", nil
+	}
+	return d.Title(), slices.DeleteFunc(d.Links(), func(l string) bool { return l == id })
 }
 
 // diffFrom is the update that takes a doc holding `from` to `to`.

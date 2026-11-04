@@ -48,6 +48,15 @@ func Encode(sn Snapshot) ([]File, error) {
 	if err != nil {
 		return nil, err
 	}
+	if sn.Meta.Deleted {
+		// A tombstone: the metadata alone.
+		return []File{
+			{MetaPath(sn.Meta.ID), append(meta, '\n')},
+			{StatePath(sn.Meta.ID), nil},
+			{DocPath(sn.Meta.ID), nil},
+			{LegacyStatePath(sn.Meta.ID), nil},
+		}, nil
+	}
 	state, err := ytext.Marshal(sn.State)
 	if err != nil {
 		return nil, fmt.Errorf("board %s: state as text: %w", sn.Meta.ID, err)

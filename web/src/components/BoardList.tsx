@@ -1,9 +1,9 @@
 import { type DragEvent, type FormEvent, type ReactNode, useMemo, useState } from 'react';
 
 import type { Board, Folder } from '../api';
-import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../catalog';
-import { countIn, type Entry, entriesOf, filterKind, inFolder, type KindFilter, pathOf, search } from '../library';
-import { folderPath, navigate } from '../router';
+import { DRAG_TYPE, type Dragged, type Mode, useCatalog } from '../catalog';
+import { filterKind, inFolder, type KindFilter, pathOf, search } from '../library';
+import { navigate } from '../router';
 import { untitled } from './BoardPage';
 import { BoardIcon, FolderIcon, PageIcon } from './icons';
 
@@ -17,16 +17,17 @@ const when = (iso: string) => {
 
 
 interface Props {
-  /** The folder on screen; "" is the top level. */
-  folder: string;
   /** The sidebar toggle, first in the header. */
   lead?: ReactNode;
   whoami: ReactNode;
+  /** The sync badge, left of the other tools. */
+  status?: ReactNode;
 }
 
-/** BoardList is the start page: a folder of pages and boards, browsed like
- *  files — breadcrumbs, subfolders, drag and drop between folders. */
-export function BoardList({ folder, lead, whoami }: Props) {
+/** BoardList is the start page: every page and board, most recently
+ *  updated first, as AFFiNE's "All docs" — the structure (folders and
+ *  documents inside documents) lives in the sidebar. */
+export function BoardList({ lead, whoami, status }: Props) {
   const cat = useCatalog();
   const { docs, folders, canWrite } = cat;
   const [error, setError] = useState<string | null>(null);
@@ -34,10 +35,7 @@ export function BoardList({ folder, lead, whoami }: Props) {
   const [kind, setKind] = useState<KindFilter>(loadKind);
   // The kind of document being created, or null while the form is closed.
   const [creating, setCreating] = useState<Mode | null>(null);
-  const [newFolder, setNewFolder] = useState(false);
-  const [renaming, setRenaming] = useState<string | null>(null);
   const [moving, setMoving] = useState<Dragged | null>(null);
-  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const act = async (f: () => Promise<unknown>) => {
     try {
@@ -47,10 +45,9 @@ export function BoardList({ folder, lead, whoami }: Props) {
       setError(String((e as Error).message ?? e));
     }
   };
-  const moveInto = (item: Dragged, target: string) => act(() => cat.move(item, target));
-  const accepts = cat.accepts;
 
-  // Drag and drop: cards are dragged, folder tiles and breadcrumbs take them.
+  // Cards drag into the sidebar: onto a folder, or onto a document to put
+  // them inside it.
   const dragProps = (item: Dragged) =>
     canWrite
       ? {
@@ -61,30 +58,12 @@ export function BoardList({ folder, lead, whoami }: Props) {
           },
         }
       : {};
-  const dropProps = (target: string) => ({
-    onDragOver: (e: DragEvent) => {
-      if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      setDropTarget(target);
-    },
-    onDragLeave: () => setDropTarget(t => (t === target ? null : t)),
-    onDrop: (e: DragEvent) => {
-      e.preventDefault();
-      setDropTarget(null);
-      const item = dragData(e);
-      if (item && accepts(item, target)) void moveInto(item, target);
-    },
-    'data-drop': dropTarget === target ? 'over' : undefined,
-  });
 
-  const path = pathOf(folders, folder);
-  const here = useMemo(() => inFolder(folders, docs ?? [], folder), [folders, docs, folder]);
   const searching = query.trim() !== '';
-  const shownDocs = filterKind(searching ? search(docs ?? [], query) : here.docs, kind);
-  const shownFolders = searching ? [] : here.folders;
-  const missing = folder !== '' && docs !== null && path.length === 0;
-  const empty = docs !== null && !searching && shownFolders.length === 0 && here.docs.length === 0;
+  const shown = useMemo(() => {
+    const all = docs ?? [];
+    return filterKind(searching ? search(all, query) : all, kind);
+  }, [docs, query, searching, kind]);
 
   const open = (href: string) => (e: React.MouseEvent) => {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -92,111 +71,50 @@ export function BoardList({ folder, lead, whoami }: Props) {
     navigate(href);
   };
 
-  // Cards in the folder's order — the order set by dragging in the sidebar —
-  // folders and documents together, as the sidebar shows them.
-  const folderCard = (f: Folder) =>
-    renaming === f.id ? (
-            <li key={f.id}>
-              <NameForm
-                initial={f.name}
-                placeholder="Folder name"
-                submit="Rename"
-                onCancel={() => setRenaming(null)}
-                onSubmit={name =>
-                  act(async () => {
-                    await cat.renameFolder(f.id, name);
-                    setRenaming(null);
-                  })
-                }
-              />
-            </li>
-          ) : (
-            <li key={f.id}>
-              <a
-                className="board-card folder-card"
-                href={folderPath(f.id)}
-                onClick={open(folderPath(f.id))}
-                {...dragProps({ kind: 'folder', id: f.id })}
-                {...dropProps(f.id)}
-              >
-                <span className="board-title">
-                  <span className="kind kind-folder" aria-label="Folder">
-                    <FolderIcon />
-                  </span>
-                  {f.name}
-                </span>
-                <span className="board-meta">{plural(countIn(folders, docs ?? [], f.id), 'item')}</span>
-                {canWrite && (
-                  <ItemMenu
-                    items={[
-                      ['Rename', () => setRenaming(f.id)],
-                      ['Move to…', () => setMoving({ kind: 'folder', id: f.id })],
-                      ['Delete', () => act(() => cat.deleteFolder(f.id))],
-                    ]}
-                  />
-                )}
-              </a>
-            </li>
-          );
-  const docCard = (b: Board) => (
-
-          <li key={b.id}>
-            <a className="board-card" href={`/b/${b.id}`} onClick={open(`/b/${b.id}`)} {...dragProps({ kind: 'doc', id: b.id })}>
-              <span className="board-title">
-                <span className={`kind kind-${b.mode}`} aria-label={b.mode === 'page' ? 'Page' : 'Board'}>
-                  {b.mode === 'page' ? <PageIcon /> : <BoardIcon />}
-                </span>
-                {b.title || untitled(b.mode)}
-              </span>
-              <span className="board-meta">
-                {searching && pathOf(folders, b.folder).length > 0 && (
-                  <>{pathOf(folders, b.folder).map(f => f.name).join(' / ')} · </>
-                )}
-                Updated {when(b.updated)}
-              </span>
-              {canWrite && <ItemMenu items={[['Move to…', () => setMoving({ kind: 'doc', id: b.id })]]} />}
-            </a>
-          </li>
-  );
-  const shown: Entry<Board>[] = searching
-    ? shownDocs.map(d => ({ kind: 'doc' as const, id: d.id, rank: d.rank, name: d.title, doc: d }))
-    : entriesOf(folders, docs ?? [], folder).filter(e => e.kind === 'folder' || filterKind([e.doc], kind).length > 0);
+  const docCard = (b: Board) => {
+    const where = pathOf(folders, b.folder)
+      .map(f => f.name)
+      .join(' / ');
+    return (
+      <li key={b.id}>
+        <a className="board-card" href={`/b/${b.id}`} onClick={open(`/b/${b.id}`)} {...dragProps({ kind: 'doc', id: b.id })}>
+          <span className="board-title">
+            <span className={`kind kind-${b.mode}`} aria-label={b.mode === 'page' ? 'Page' : 'Board'}>
+              {b.mode === 'page' ? <PageIcon /> : <BoardIcon />}
+            </span>
+            {b.title || untitled(b.mode)}
+          </span>
+          <span className="board-meta">
+            {where && <>{where} · </>}
+            Updated {when(b.updated)}
+          </span>
+          {canWrite && <ItemMenu items={[['Move to folder…', () => setMoving({ kind: 'doc', id: b.id })]]} />}
+        </a>
+      </li>
+    );
+  };
 
   return (
     <div className="page">
       <header className="list-head">
         {lead}
-        <nav className="crumbs" aria-label="Folder">
-          <a href="/" className="crumb" onClick={open('/')} {...dropProps('')}>
-            All
-          </a>
-          {path.map(f => (
-            <span key={f.id} className="crumb-sep-wrap">
-              <span className="crumb-sep">/</span>
-              <a href={folderPath(f.id)} className="crumb" onClick={open(folderPath(f.id))} {...dropProps(f.id)}>
-                {f.name}
-              </a>
-            </span>
-          ))}
-        </nav>
+        <h1 className="list-title">All documents</h1>
         <div className="list-tools">
+          {status}
           <input
             className="search"
             type="search"
-            placeholder="Search everywhere…"
+            placeholder="Search…"
             value={query}
             onChange={e => setQuery(e.target.value)}
           />
-          {canWrite && !missing && (
+          {canWrite && (
             <>
               <button type="button" className="primary" onClick={() => setCreating('page')}>
                 New page
               </button>
               <button type="button" onClick={() => setCreating('edgeless')}>
                 New board
-              </button>
-              <button type="button" onClick={() => setNewFolder(true)}>
-                New folder
               </button>
             </>
           )}
@@ -222,29 +140,14 @@ export function BoardList({ folder, lead, whoami }: Props) {
             </button>
           ))}
         </div>
-        {canWrite && <span className="muted hint">Drag pages, boards and folders onto a folder to move them.</span>}
       </div>
 
-      {creating && <CreateDoc mode={creating} folder={folder} onCancel={() => setCreating(null)} />}
-      {newFolder && (
-        <NameForm
-          placeholder="Folder name"
-          submit="Create folder"
-          onCancel={() => setNewFolder(false)}
-          onSubmit={name =>
-            act(async () => {
-              await cat.createFolder(name, folder);
-              setNewFolder(false);
-            })
-          }
-        />
-      )}
+      {creating && <CreateDoc mode={creating} onCancel={() => setCreating(null)} />}
       {(error ?? cat.error) && <p className="error">{error ?? cat.error}</p>}
       {docs === null && !cat.error && <p className="muted">Loading…</p>}
-      {missing && <p className="muted">This folder is not there any more.</p>}
-      {empty && !missing && !creating && (
+      {docs !== null && docs.length === 0 && !creating && (
         <div className="empty">
-          <p>{folder ? 'This folder is empty.' : 'Nothing here yet.'}</p>
+          <p>Nothing here yet.</p>
           {canWrite && (
             <>
               <button type="button" className="primary" onClick={() => setCreating('page')}>
@@ -257,22 +160,20 @@ export function BoardList({ folder, lead, whoami }: Props) {
           )}
         </div>
       )}
-      {searching && shownDocs.length === 0 && <p className="muted">Nothing matches.</p>}
+      {docs !== null && docs.length > 0 && shown.length === 0 && <p className="muted">Nothing matches.</p>}
 
-      <ul className="board-grid">
-        {shown.map(e => (e.kind === 'folder' ? folderCard(e.folder) : docCard(e.doc)))}
-      </ul>
+      <ul className="board-grid">{shown.map(docCard)}</ul>
 
       {moving && (
         <MoveDialog
           folders={folders}
           item={moving}
-          accepts={target => accepts(moving, target)}
+          accepts={target => cat.accepts(moving, target)}
           onCancel={() => setMoving(null)}
           onMove={target => {
             const item = moving;
             setMoving(null);
-            void moveInto(item, target);
+            void act(() => cat.move(item, target));
           }}
         />
       )}
@@ -373,46 +274,7 @@ function MoveDialog({
   );
 }
 
-function NameForm({
-  initial = '',
-  placeholder,
-  submit,
-  onSubmit,
-  onCancel,
-}: {
-  initial?: string;
-  placeholder: string;
-  submit: string;
-  onSubmit: (name: string) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState(initial);
-  return (
-    <form
-      className="create"
-      onSubmit={(e: FormEvent) => {
-        e.preventDefault();
-        if (name.trim()) onSubmit(name.trim());
-      }}
-    >
-      <input
-        autoFocus
-        placeholder={placeholder}
-        value={name}
-        onChange={e => setName(e.target.value)}
-        onKeyDown={e => e.key === 'Escape' && onCancel()}
-      />
-      <button type="submit" className="primary" disabled={!name.trim()}>
-        {submit}
-      </button>
-      <button type="button" onClick={onCancel}>
-        Cancel
-      </button>
-    </form>
-  );
-}
-
-function CreateDoc({ mode, folder, onCancel }: { mode: Mode; folder: string; onCancel: () => void }) {
+function CreateDoc({ mode, onCancel }: { mode: Mode; onCancel: () => void }) {
   const cat = useCatalog();
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
@@ -421,8 +283,7 @@ function CreateDoc({ mode, folder, onCancel }: { mode: Mode; folder: string; onC
     e.preventDefault();
     setBusy(true);
     try {
-      // New documents go into the folder on screen.
-      const b = await cat.createDoc(mode, folder, title);
+      const b = await cat.createDoc(mode, '', title);
       navigate(`/b/${b.id}`);
     } catch (err) {
       setError(String((err as Error).message ?? err));
@@ -448,8 +309,6 @@ function CreateDoc({ mode, folder, onCancel }: { mode: Mode; folder: string; onC
     </form>
   );
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const KINDS: Array<[KindFilter, string]> = [
   ['all', 'All'],

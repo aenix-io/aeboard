@@ -1,13 +1,14 @@
 // Ported from aeman internal/server/auth.go (Apache-2.0): the sign-in web
 // flow, the sessions and their encrypted file, GitHub App user-token
-// renewal. aeman's MCP authorization server (dynamic client registration,
-// PKCE codes, the consent screen) is not part of aenotes.
+// renewal, and the state of the MCP authorization server (registered
+// clients, in-flight authorizations, codes, consents; see oauth.go).
 
 package server
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,7 @@ const (
 	sessionCookie = "aenotes_session"
 	stateCookie   = "aenotes_oauth_state"
 	nextCookie    = "aenotes_oauth_next"
+	consentCookie = "aenotes_mcp_consent"
 	sessionTTL    = 14 * 24 * time.Hour
 	// stateTTL bounds a sign-in: the state cookie outlives no abandoned
 	// round trip to the forge by more than this.
@@ -72,12 +74,32 @@ type oauthSession struct {
 	// expiration opted out) and refresh stays empty.
 	refresh     string
 	tokenExpiry time.Time
+
+	// client is the MCP client the session was authorized for ("" for a
+	// browser sign-in). Such a session's id is that client's access token.
+	client string
+	// mcpRefresh is the client's current refresh token: single-use, a new
+	// one with every refresh.
+	mcpRefresh string
+	// mcpAccess is the client's current access token, a fresh one on every
+	// refresh, so a leaked one dies with the next refresh.
+	mcpAccess string
+	// accessExpiry is when the access token stops being accepted until the
+	// client refreshes it. Zero until the authorization code is redeemed.
+	accessExpiry time.Time
 }
 
-// persistedState is the on-disk envelope: the sessions, sealed. A file
-// written without a key carries nothing.
+// persistedState is the on-disk envelope: the registered MCP clients (no
+// secret: their redirect URIs) and the sessions, sealed. Without a key the
+// sessions are left out.
 type persistedState struct {
-	EncSessions string `json:"encSessions,omitempty"`
+	Clients     map[string]persistedClient `json:"clients,omitempty"`
+	EncSessions string                     `json:"encSessions,omitempty"`
+}
+
+// persistedClient is the on-disk form of an oauthClient.
+type persistedClient struct {
+	RedirectURIs []string `json:"redirectUris"`
 }
 
 // persistedSession is the on-disk form of an oauthSession.
@@ -89,6 +111,11 @@ type persistedSession struct {
 	Created     time.Time `json:"created"`
 	Refresh     string    `json:"refresh,omitempty"`
 	TokenExpiry time.Time `json:"tokenExpiry,omitempty"`
+	// The MCP side of the session (see oauthSession).
+	Client       string    `json:"client,omitempty"`
+	MCPRefresh   string    `json:"mcpRefresh,omitempty"`
+	MCPAccess    string    `json:"mcpAccess,omitempty"`
+	AccessExpiry time.Time `json:"accessExpiry,omitempty"`
 }
 
 // authManager runs the forge's OAuth web flow and keeps per-visitor
@@ -115,6 +142,18 @@ type authManager struct {
 	// token is SINGLE-USE, so two concurrent renewals would burn it — the
 	// second gets "bad_refresh_token" and the session dies for no reason.
 	refreshing map[string]chan struct{}
+
+	// The MCP authorization server (oauth.go): registered clients
+	// (persisted), and the short-lived state of an authorization in flight.
+	clients        map[string]oauthClient
+	pendingAuth    map[string]pendingAuth    // by the state sent to the forge
+	authCodes      map[string]authCode       // single-use, authCodeTTL
+	pendingConsent map[string]pendingConsent // by consent id, consentTTL
+	// registerLimiter rate-limits the public client registration.
+	registerLimiter *rateLimiter
+	// authorizeLimiter rate-limits authorizations, so a flood cannot fill
+	// the pending ones for everybody.
+	authorizeLimiter *rateLimiter
 }
 
 func newAuthManager(cfg OAuthConfig, f forge.Forge, log *slog.Logger) *authManager {
@@ -133,16 +172,24 @@ func newAuthManager(cfg OAuthConfig, f forge.Forge, log *slog.Logger) *authManag
 		tokenURL:     f.TokenURL(),
 		sessions:     map[string]oauthSession{},
 		refreshing:   map[string]chan struct{}{},
+
+		clients:        map[string]oauthClient{},
+		pendingAuth:    map[string]pendingAuth{},
+		authCodes:      map[string]authCode{},
+		pendingConsent: map[string]pendingConsent{},
+		// Legitimate MCP clients register once: this only ever bites a flood.
+		registerLimiter:  newRateLimiter(30, time.Minute),
+		authorizeLimiter: newRateLimiter(60, time.Minute),
 	}
 	a.load()
 	return a
 }
 
-// load restores the sessions when a key is configured and the file
-// decrypts under it; a wrong key or a damaged file signs everyone out
-// rather than trusting garbage.
+// load restores the registered clients, and the sessions when a key is
+// configured and the file decrypts under it; a wrong key or a damaged file
+// signs everyone out rather than trusting garbage.
 func (a *authManager) load() {
-	if a.path == "" || a.sessionKey == nil {
+	if a.path == "" {
 		return
 	}
 	data, err := os.ReadFile(a.path)
@@ -157,7 +204,10 @@ func (a *authManager) load() {
 		a.log.Error("session store load: parse failed", "err", err)
 		return
 	}
-	if in.EncSessions == "" {
+	for id, c := range in.Clients {
+		a.clients[id] = oauthClient{redirectURIs: append([]string(nil), c.RedirectURIs...)}
+	}
+	if in.EncSessions == "" || a.sessionKey == nil {
 		return
 	}
 	sessions, err := decryptSessions(a.sessionKey, in.EncSessions)
@@ -171,25 +221,34 @@ func (a *authManager) load() {
 			a.sessions[sid] = oauthSession{
 				token: s.Token, login: s.Login, name: s.Name, avatarURL: s.AvatarURL, created: s.Created,
 				refresh: s.Refresh, tokenExpiry: s.TokenExpiry,
+				client: s.Client, mcpRefresh: s.MCPRefresh, mcpAccess: s.MCPAccess, accessExpiry: s.AccessExpiry,
 			}
 		}
 	}
-	a.log.Info("session store restored", "sessions", len(a.sessions))
+	a.log.Info("session store restored", "sessions", len(a.sessions), "mcpClients", len(a.clients))
 }
 
-// saveLocked persists the sessions, sealed with the session key — never a
-// plaintext token. Without a key nothing is written. Callers hold a.mu.
+// saveLocked persists the registered clients and the sessions, sealed with
+// the session key — never a plaintext token. Without a key only the clients
+// are written (nothing at all while there are none). Callers hold a.mu.
 func (a *authManager) saveLocked() {
-	if a.path == "" || a.sessionKey == nil {
+	if a.path == "" || (a.sessionKey == nil && len(a.clients) == 0) {
 		return
 	}
 	out := persistedState{}
-	if len(a.sessions) > 0 {
+	if len(a.clients) > 0 {
+		out.Clients = make(map[string]persistedClient, len(a.clients))
+		for id, c := range a.clients {
+			out.Clients[id] = persistedClient{RedirectURIs: append([]string(nil), c.redirectURIs...)}
+		}
+	}
+	if a.sessionKey != nil && len(a.sessions) > 0 {
 		sessions := make(map[string]persistedSession, len(a.sessions))
 		for sid, s := range a.sessions {
 			sessions[sid] = persistedSession{
 				Token: s.token, Login: s.login, Name: s.name, AvatarURL: s.avatarURL, Created: s.created,
 				Refresh: s.refresh, TokenExpiry: s.tokenExpiry,
+				Client: s.client, MCPRefresh: s.mcpRefresh, MCPAccess: s.mcpAccess, AccessExpiry: s.accessExpiry,
 			}
 		}
 		enc, err := encryptSessions(a.sessionKey, sessions)
@@ -268,7 +327,33 @@ func (a *authManager) session(r *http.Request) (oauthSession, bool) {
 	if sid == "" {
 		return oauthSession{}, false
 	}
-	return a.sessionByID(r.Context(), sid)
+	s, ok := a.sessionByID(r.Context(), sid)
+	// An agent's session (MCP) is not a browser's: its id is never a cookie.
+	if !ok || s.client != "" {
+		return oauthSession{}, false
+	}
+	return s, true
+}
+
+// sessionByAccess resolves an MCP access token to its session and id.
+func (a *authManager) sessionByAccess(ctx context.Context, token string) (string, oauthSession, bool) {
+	if token == "" {
+		return "", oauthSession{}, false
+	}
+	a.mu.Lock()
+	sid := ""
+	for id, s := range a.sessions {
+		if s.mcpAccess != "" && subtle.ConstantTimeCompare([]byte(s.mcpAccess), []byte(token)) == 1 {
+			sid = id
+			break
+		}
+	}
+	a.mu.Unlock()
+	if sid == "" {
+		return "", oauthSession{}, false
+	}
+	s, ok := a.sessionByID(ctx, sid)
+	return sid, s, ok
 }
 
 func (a *authManager) sessionByID(ctx context.Context, sid string) (oauthSession, bool) {
@@ -420,6 +505,12 @@ func (a *authManager) handleLogin(w http.ResponseWriter, r *http.Request) {
 // cookie (a forged callback carries someone else's code), the code is
 // traded for the visitor's token, and the forge says who they are.
 func (a *authManager) handleCallback(w http.ResponseWriter, r *http.Request) {
+	// An MCP authorization is keyed by the state it sent to the forge: it
+	// resumes in oauth.go. Everything else is the browser's sign-in.
+	if p, ok := a.takePendingAuth(r.URL.Query().Get("state")); ok {
+		a.handleMCPCallback(w, r, p)
+		return
+	}
 	sc, err := r.Cookie(stateCookie)
 	if err != nil || sc.Value == "" || sc.Value != r.URL.Query().Get("state") {
 		writeError(w, http.StatusBadRequest, "invalid OAuth state")

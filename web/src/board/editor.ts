@@ -71,7 +71,9 @@ export function getWorkspace(user: User): DocsWorkspace {
     // one of whichever document asks.
     blobSource: new ServerBlobSource(() => currentDocID),
     create: async id => {
-      await api.createBoard({ id, mode: 'page', blank: true });
+      // The editor makes a document from inside the open one ("@" → new
+      // doc, "turn into linked doc"): it lives there.
+      await api.createBoard({ id, mode: 'page', blank: true, parent: currentDocID || undefined });
     },
   });
   workspace.storeExtensions = getTestStoreManager().get('store');

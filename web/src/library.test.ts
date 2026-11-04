@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canMoveFolder, countIn, entriesOf, filterKind, inFolder, pathOf, placeAt, search } from './library';
+import { canMoveFolder, atFolderLevel, countIn, homePath, inside, isInside, entriesOf, filterKind, inFolder, pathOf, placeAt, search } from './library';
 
 // work/
 //   meetings/
@@ -108,5 +108,44 @@ describe('ordering', () => {
   it('a document moved into another folder takes a key there', () => {
     const ps = placeAt(fs, ds, 'f2', { kind: 'doc', id: 'd1' }, 0);
     expect(ps).toEqual([{ kind: 'doc', id: 'd1', rank: 'i' }]);
+  });
+});
+
+describe('documents inside documents', () => {
+  const doc = (id: string, o: { parent?: string; links?: string[]; folder?: string; rank?: string } = {}) => ({
+    id,
+    title: id,
+    mode: 'page' as const,
+    folder: o.folder ?? '',
+    parent: o.parent,
+    links: o.links,
+    rank: o.rank,
+  });
+  const folders = [{ id: 'f', name: 'F', parent: '' }];
+
+  it('shows a document in its one home', () => {
+    const docs = [doc('p', { links: ['x', 'c'] }), doc('c', { parent: 'p' }), doc('x', { folder: 'f' })];
+    expect(atFolderLevel(docs).map(d => d.id)).toEqual(['p', 'x']);
+    const p = inside(docs, docs[0]);
+    expect(p.docs.map(d => d.id)).toEqual(['c']);
+    expect(p.shortcuts.map(d => d.id)).toEqual(['x']);
+  });
+
+  it('breaks a loop of parents so both documents still show', () => {
+    const docs = [doc('y', { parent: 'x' }), doc('x', { parent: 'y' })];
+    expect(atFolderLevel(docs).map(d => d.id)).toEqual(['x']);
+    expect(inside(docs, docs[1]).docs.map(d => d.id)).toEqual(['y']);
+    expect(inside(docs, docs[0]).docs.map(d => d.id)).toEqual([]);
+  });
+
+  it('puts a document whose parent is gone at the top', () => {
+    expect(atFolderLevel([doc('c', { parent: 'gone' })]).map(d => d.id)).toEqual(['c']);
+  });
+
+  it('finds the way down to a document', () => {
+    const docs = [doc('p', { folder: 'f' }), doc('c', { parent: 'p' }), doc('g', { parent: 'c' })];
+    expect(homePath(folders, docs, 'g').map(c => c.id)).toEqual(['f', 'p', 'c']);
+    expect(isInside(docs, 'g', 'p')).toBe(true);
+    expect(isInside(docs, 'p', 'g')).toBe(false);
   });
 });

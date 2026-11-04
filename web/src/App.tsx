@@ -6,6 +6,9 @@ import { BoardList } from './components/BoardList';
 import { BoardPage } from './components/BoardPage';
 import { NoAccess, SignIn } from './components/SignIn';
 import { Sidebar, SidebarToggle, useSidebar } from './components/Sidebar';
+import { SearchDialog } from './components/SearchDialog';
+import { TrashList } from './components/TrashList';
+import { onOpenSearch } from './prefs';
 import { SyncBadge } from './components/SyncBadge';
 import { WhoAmI } from './components/WhoAmI';
 import { CatalogProvider } from './catalog';
@@ -58,12 +61,33 @@ function Boards({
   // The status stream is behind the sign-in, so it only starts here.
   const sync = useSyncStatus();
   const [sidebar, toggleSidebar] = useSidebar();
-  const lead = <SidebarToggle open={sidebar} onToggle={toggleSidebar} />;
+  const [searching, setSearching] = useState(false);
+  const closeSearch = useCallback(() => setSearching(false), []);
+  useEffect(() => onOpenSearch(() => setSearching(true)), []);
+  // ⌘K / Ctrl+K opens the finder, unless the editor took it (with text
+  // selected it makes a link).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && !e.defaultPrevented) {
+        e.preventDefault();
+        setSearching(true);
+      }
+    };
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, []);
+  // The sidebar's button stays in one place, the top left corner: in the
+  // sidebar's head while it is open, over the page while it is not — where
+  // a document's header leaves room for it (the lists' headers sit lower,
+  // clear of it).
+  const lead = sidebar ? null : <span className="lead-space" aria-hidden="true" />;
   const userName = me?.login ?? name;
   const canWrite = !me || me.access === 'write';
+  // The sync badge comes and goes, so it stands left of the header's other
+  // right-hand items: they stay put when it shows.
+  const status = <SyncBadge status={sync} />;
   const whoami = (
     <>
-      <SyncBadge status={sync} />
       <WhoAmI
         identity={me}
         hosted={!!me?.hosted}
@@ -79,7 +103,8 @@ function Boards({
   return (
     <CatalogProvider canWrite={canWrite} version={sync?.catalog}>
       <div className={`app shell${sidebar ? ' shell-sidebar' : ''}`}>
-        {sidebar && <Sidebar route={route} />}
+        <SidebarToggle open={sidebar} onToggle={toggleSidebar} />
+        {sidebar && <Sidebar route={route} hosted={!!me?.hosted} />}
         <main className="main">
           {route.name === 'board' ? (
             <BoardPage
@@ -89,12 +114,16 @@ function Boards({
               canWrite={canWrite}
               lead={lead}
               whoami={whoami}
+              status={status}
             />
+          ) : route.name === 'trash' ? (
+            <TrashList whoami={whoami} status={status} />
           ) : (
-            <BoardList key={route.folder} folder={route.folder} lead={lead} whoami={whoami} />
+            <BoardList whoami={whoami} status={status} />
           )}
         </main>
       </div>
+      {searching && <SearchDialog onClose={closeSearch} />}
     </CatalogProvider>
   );
 }

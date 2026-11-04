@@ -1,5 +1,5 @@
 // Package server is aenotes's HTTP surface: the board REST API, the Yjs sync
-// WebSocket (ygo) and the embedded SPA.
+// WebSocket (ygo), the MCP transport (/mcp) and the embedded SPA.
 package server
 
 import (
@@ -13,10 +13,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/reearth/ygo/provider/websocket"
 
 	"github.com/aenix-io/aenotes/internal/blobs"
+	"github.com/aenix-io/aenotes/internal/blocks"
 	"github.com/aenix-io/aenotes/internal/boards"
+	"github.com/aenix-io/aenotes/internal/mcpserver"
 )
 
 // Server wires the board store to HTTP.
@@ -33,6 +36,10 @@ type Server struct {
 	auth    *authManager
 	access  *forgeAccess
 	editors editors
+
+	mcpInfo MCPInfo
+	// newMCP builds the MCP tool set (mcpserver.New; a test swaps it).
+	newMCP func(mcpserver.Deps) *mcp.Server
 
 	statusMu   sync.Mutex
 	statusSubs map[chan struct{}]struct{}
@@ -95,14 +102,28 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("GET /auth/login", s.auth.handleLogin)
 		mux.HandleFunc("GET /auth/callback", s.auth.handleCallback)
 		mux.HandleFunc("POST /auth/logout", s.auth.handleLogout)
+		s.registerOAuthServer(mux)
+	}
+	s.registerMCP(mux)
+	// Discovery a client probes for and this server does not offer is a
+	// 404, never the SPA's index.html (a 200 an OAuth client would parse).
+	for _, p := range []string{"/.well-known/", "/oauth/"} {
+		mux.HandleFunc(p, func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusNotFound, "not found")
+		})
 	}
 	mux.HandleFunc("GET /api/v1/me", s.me)
 	mux.HandleFunc("GET /api/v1/status", s.getStatus)
 	mux.HandleFunc("GET /api/v1/status/events", s.statusEvents)
 	mux.HandleFunc("GET /api/v1/boards", s.listBoards)
+	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
+	mux.HandleFunc("DELETE /api/v1/boards/{id}", s.deleteBoard)
+	mux.HandleFunc("POST /api/v1/boards/{id}/children", s.addChild)
+	mux.HandleFunc("POST /api/v1/boards/{id}/copy", s.copyBoard)
+	mux.HandleFunc("DELETE /api/v1/boards/{id}/children/{child}", s.removeChild)
 	mux.HandleFunc("POST /api/v1/folders", s.createFolder)
 	mux.HandleFunc("PATCH /api/v1/folders/{id}", s.patchFolder)
 	mux.HandleFunc("DELETE /api/v1/folders/{id}", s.deleteFolder)
@@ -122,16 +143,25 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 type boardList struct {
-	Boards  []boards.Meta   `json:"boards"`
+	Boards  []docEntry      `json:"boards"`
 	Folders []boards.Folder `json:"folders"`
 }
 
+// docEntry is a document in the catalog: its metadata and the documents it
+// links to (its children in the sidebar).
+type docEntry struct {
+	boards.Meta
+	Links []string `json:"links,omitempty"`
+}
+
 func (s *Server) listBoards(w http.ResponseWriter, _ *http.Request) {
-	docs := s.store.List()
-	for i := range docs {
+	links := s.store.Links()
+	docs := []docEntry{}
+	for _, m := range s.store.List() {
 		// A document whose folder was deleted on another replica shows at
 		// the top level.
-		docs[i].Folder = s.store.FolderOf(docs[i])
+		m.Folder = s.store.FolderOf(m)
+		docs = append(docs, docEntry{Meta: m, Links: links[m.ID]})
 	}
 	writeJSON(w, http.StatusOK, boardList{Boards: docs, Folders: s.store.Folders()})
 }
@@ -181,13 +211,14 @@ func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
 		Mode   string `json:"mode"`
 		Title  string `json:"title"`
 		Folder string `json:"folder"`
+		Parent string `json:"parent"`
 		Blank  bool   `json:"blank"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Folder: in.Folder, Blank: in.Blank}, s.login(r))
+	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Folder: in.Folder, Parent: in.Parent, Blank: in.Blank}, s.login(r))
 	if errors.Is(err, boards.ErrExists) {
 		writeError(w, http.StatusConflict, "a document with this id exists")
 		return
@@ -229,6 +260,86 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 		s.ApplyRemote(r.Context(), map[string][]byte{m.ID: upd})
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// search finds documents by title and text (?q=).
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, struct {
+		Hits []boards.Hit `json:"hits"`
+	}{s.store.Search(r.URL.Query().Get("q"))})
+}
+
+// deleteBoard deletes a trashed document for good (moving to the trash and
+// back is a PATCH of "trashed").
+func (s *Server) deleteBoard(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Delete(r.PathValue("id"), s.login(r)); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// addChild puts a document inside another one (AFFiNE's "add linked doc"),
+// or moves it among the other one's children: a link line to it goes at the
+// end of the parent's body, before or after the link to a sibling, or first.
+func (s *Server) addChild(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Doc    string `json:"doc"`
+		Before string `json:"before"`
+		After  string `json:"after"`
+		First  bool   `json:"first"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	parent := r.PathValue("id")
+	upd, err := s.store.PlaceChild(parent, in.Doc, blocks.Place{Before: in.Before, After: in.After, First: in.First}, s.login(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.sendLive(r, parent, upd)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// copyBoard makes a separate copy of a document inside another one, where a
+// shortcut to it was: the shortcut's link now points at the copy.
+func (s *Server) copyBoard(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Into string `json:"into"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	m, upd, err := s.store.Copy(r.PathValue("id"), in.Into, s.login(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.sendLive(r, in.Into, upd)
+	writeJSON(w, http.StatusCreated, m)
+}
+
+// removeChild takes a document out of another one: its link lines go from
+// the parent's body. A mention inside the text is the author's and stays
+// (409).
+func (s *Server) removeChild(w http.ResponseWriter, r *http.Request) {
+	parent := r.PathValue("id")
+	upd, err := s.store.Unlink(parent, r.PathValue("child"), s.login(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.sendLive(r, parent, upd)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) sendLive(r *http.Request, id string, upd []byte) {
+	if upd != nil {
+		s.ApplyRemote(r.Context(), map[string][]byte{id: upd})
+	}
 }
 
 // Attachments are addressed per board so access can follow the board's
@@ -297,6 +408,12 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, boards.ErrNotEmpty):
 		writeError(w, http.StatusConflict, "the folder is not empty")
+		return
+	case errors.Is(err, boards.ErrInlineLink):
+		writeError(w, http.StatusConflict, "it is mentioned in the text there: remove the mention to take it out")
+		return
+	case errors.Is(err, boards.ErrNotTrashed):
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "storage error")

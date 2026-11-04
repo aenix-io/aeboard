@@ -4,8 +4,12 @@ import type { DocSession } from '../board/editor';
 import { useCatalog } from '../catalog';
 
 import { api, type Board } from '../api';
-import { pathOf } from '../library';
-import { folderPath, navigate } from '../router';
+import { homePath, isInside } from '../library';
+import { navigate } from '../router';
+import { noteOpened, toggleFavorite, useFavorites } from '../prefs';
+import { MoreIcon, StarIcon } from './icons';
+import { RowMenu } from './RowMenu';
+import { Confirm } from './Confirm';
 
 interface Props {
   id: string;
@@ -16,6 +20,8 @@ interface Props {
   /** The sidebar toggle, first in the header. */
   lead?: ReactNode;
   whoami: ReactNode;
+  /** The sync badge, left of the Board/Page switch. */
+  status?: ReactNode;
 }
 
 type View = 'edgeless' | 'page';
@@ -25,9 +31,125 @@ function viewFromURL(): View | undefined {
   return v === 'page' || v === 'edgeless' ? v : undefined;
 }
 
-/** BoardPage is one document — a board or a page: a slim header (title,
- *  its folder, the Board/Page switch) over the editor. */
-export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
+/** DocPath is the header's way down to the document: the folders and
+ *  documents above the row the visitor opened it from in the sidebar, or
+ *  above its own place. */
+function DocPath({ id }: { id: string }) {
+  const cat = useCatalog();
+  const trail = cat.trail?.doc === id ? cat.trail : null;
+  const path = trail ? trail.path : homePath(cat.folders, cat.docs ?? [], id);
+  const open = (doc: string) => (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    cat.setTrail(null);
+    navigate(`/b/${doc}`);
+  };
+  if (path.length === 0) return null;
+  return (
+    <nav className="doc-crumbs" aria-label="Path">
+      {path.map(c => (
+        <span key={`${c.kind}:${c.id}`} className="crumb-sep-wrap">
+          {c.kind === 'doc' ? (
+            <a href={`/b/${c.id}`} onClick={open(c.id)}>
+              {c.name || 'Untitled'}
+            </a>
+          ) : (
+            <span className="crumb-folder">{c.name}</span>
+          )}
+          <span className="crumb-sep"> / </span>
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+/** ToOriginal is the button after the title of a document opened from a
+ *  shortcut: it shows the document where it lives. */
+function ToOriginal({ id }: { id: string }) {
+  const cat = useCatalog();
+  if (!(cat.trail?.doc === id && cat.trail.shortcut)) return null;
+  return (
+    <a
+      className="to-original"
+      href={`/b/${id}`}
+      title="Show where this document lives"
+      onClick={e => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        cat.setTrail(null);
+      }}
+    >
+      ↗ Go to original
+    </a>
+  );
+}
+
+/** DocActions are the header's star (favorites, this browser's) and "⋯"
+ *  menu: the mode the document opens in by default, and the trash. */
+function DocActions({
+  id,
+  canWrite,
+  fallbackMode,
+  onTrash,
+}: {
+  id: string;
+  canWrite: boolean;
+  fallbackMode: 'edgeless' | 'page';
+  onTrash: () => void;
+}) {
+  const cat = useCatalog();
+  const favorite = useFavorites().includes(id);
+  const doc = cat.docs?.find(d => d.id === id);
+  const mode = doc?.mode ?? fallbackMode;
+  const other = mode === 'page' ? 'edgeless' : 'page';
+  const items: Array<[string, () => void]> = [];
+  // Opened from a shortcut: the way to the original, and making the
+  // shortcut's place the document's own (not when the shortcut's document
+  // lives inside this one: it would go inside itself).
+  const trail = cat.trail?.doc === id && cat.trail.shortcut ? cat.trail : null;
+  const from = trail?.path.at(-1)?.kind === 'doc' ? trail.path.at(-1)!.id : '';
+  if (trail) items.push(['Go to original', () => cat.setTrail(null)]);
+  if (trail && canWrite && from && from !== id && !isInside(cat.docs ?? [], from, id)) {
+    items.push([
+      'Make this the original',
+      () =>
+        void cat
+          .makeOriginal(id, from)
+          // Now it lives where it was opened from: its own place is the path.
+          .then(() => cat.setTrail(null))
+          .catch(() => {}),
+    ]);
+  }
+  if (canWrite && doc && !doc.trashed) {
+    items.push([
+      `Default to ${other === 'page' ? 'Page' : 'Board'} mode`,
+      () => {
+        cat.patchDoc(id, { mode: other });
+        void api.updateBoard(id, { mode: other }).then(cat.reload, () => cat.reload());
+      },
+    ]);
+    items.push(['Move to trash', onTrash]);
+  }
+  return (
+    <span className="doc-actions">
+      <button
+        type="button"
+        className={`icon-button${favorite ? ' icon-button-on' : ''}`}
+        aria-pressed={favorite}
+        aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
+        title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+        onClick={() => toggleFavorite(id)}
+      >
+        <StarIcon on={favorite} />
+      </button>
+      {items.length > 0 && <RowMenu label="Document actions" glyph={<MoreIcon />} items={items} />}
+    </span>
+  );
+}
+
+/** BoardPage is one document — a board or a page: a slim header (the
+ *  title and the Board/Page switch, as AFFiNE's) over the editor. */
+export function BoardPage({ id, userName, canWrite, lead, whoami, status }: Props) {
   const cat = useCatalog();
   const [board, setBoard] = useState<Board | null>(null);
   const [view, setView] = useState<View | undefined>(viewFromURL);
@@ -35,9 +157,11 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const mount = useRef<HTMLDivElement>(null);
-  const folders = cat.folders;
-  // Where the document is now: a move in the sidebar shows here at once.
-  const docFolder = cat.docs?.find(d => d.id === id)?.folder ?? board?.folder ?? '';
+  const [deleting, setDeleting] = useState(false);
+  const [trashing, setTrashing] = useState(false);
+  useEffect(() => noteOpened(id), [id]);
+  // In the trash: AFFiNE keeps such a document readable, with a way back.
+  const trashed = cat.trash.some(d => d.id === id);
 
   useEffect(() => {
     api
@@ -132,52 +256,18 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
     <div className="board-page">
       <header className="board-head">
         {lead}
-        <a
-          href={folderPath(docFolder)}
-          className="back"
-          onClick={e => {
-            e.preventDefault();
-            navigate(folderPath(docFolder));
-          }}
-        >
-          ←
-        </a>
-        <nav className="crumbs crumbs-small" aria-label="Folder">
-          <a
-            href="/"
-            className="crumb"
-            onClick={e => {
-              e.preventDefault();
-              navigate('/');
-            }}
-          >
-            All
-          </a>
-          {board &&
-            pathOf(folders, docFolder).map(f => (
-              <span key={f.id} className="crumb-sep-wrap">
-                <span className="crumb-sep">/</span>
-                <a
-                  href={folderPath(f.id)}
-                  className="crumb"
-                  onClick={e => {
-                    e.preventDefault();
-                    navigate(folderPath(f.id));
-                  }}
-                >
-                  {f.name}
-                </a>
-              </span>
-            ))}
-          <span className="crumb-sep">/</span>
-        </nav>
+        {board && <DocPath id={id} />}
         {board && !canWrite && (
           <>
             <h1 className="title-input title-static">{board.title || untitled(board.mode)}</h1>
           </>
         )}
         {board && canWrite && (
-          <>
+          <span className="title-wrap">
+            {/* The hidden copy of the text sizes the field to it. */}
+            <span className="title-sizer" aria-hidden="true">
+              {title || untitled(board.mode)}
+            </span>
             <input
               className="title-input"
               value={title}
@@ -193,10 +283,12 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
               }}
               onBlur={() => title !== board.title && save({ title })}
             />
-          </>
+          </span>
         )}
+        {board && <ToOriginal id={id} />}
         {error && board && <span className="error">{error}</span>}
         <span className="spacer" />
+        {status}
         {board && (
           <div className="segmented" role="tablist" aria-label="View">
             {(['edgeless', 'page'] as const).map(v => (
@@ -213,8 +305,54 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
             ))}
           </div>
         )}
+        {board && <DocActions id={id} canWrite={canWrite} fallbackMode={board.mode} onTrash={() => setTrashing(true)} />}
         {whoami}
       </header>
+      {trashing && (
+        <Confirm
+          title="Move to trash?"
+          body={`${title || untitled(board?.mode ?? 'page')} will be moved to the trash. You can restore it from there.`}
+          action="Move to trash"
+          danger
+          onCancel={() => setTrashing(false)}
+          onConfirm={() => {
+            setTrashing(false);
+            void cat.trashDoc(id).catch(() => {});
+          }}
+        />
+      )}
+      {trashed && (
+        <div className="trash-banner" role="status">
+          This document is in the trash.
+          <span className="spacer" />
+          {canWrite && (
+            <>
+              <button type="button" onClick={() => void cat.restoreDoc(id).catch(() => {})}>
+                Restore
+              </button>
+              <button type="button" className="danger" onClick={() => setDeleting(true)}>
+                Delete permanently
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {deleting && (
+        <Confirm
+          title="Delete permanently?"
+          body={`${title || untitled(board?.mode ?? 'page')} will be deleted for good. This cannot be undone.`}
+          action="Delete permanently"
+          danger
+          onCancel={() => setDeleting(false)}
+          onConfirm={() => {
+            setDeleting(false);
+            void cat
+              .deleteDoc(id)
+              .then(() => navigate('/trash'))
+              .catch(() => {});
+          }}
+        />
+      )}
       <div className="editor-mount" ref={mount} />
     </div>
   );
