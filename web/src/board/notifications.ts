@@ -82,6 +82,9 @@ function show(opts: {
 export const ToastNotifications = NotificationExtension({
   toast: (message, options) => show({ title: message, duration: options?.duration }),
   notify: opts => show(opts),
+  // Required by the type, but NotificationExtension builds its own on top
+  // of notify (closing the card when the undo happens another way).
+  notifyWithUndoAction: opts => show(opts),
   // Rare in an edgeless editor (deleting a frame's contents, renaming): the
   // browser's own dialogs are enough.
   confirm: async ({ title, message }) =>
