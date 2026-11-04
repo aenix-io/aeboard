@@ -126,6 +126,7 @@ func runServe(args []string) error {
 		return err
 	}
 	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	httpSrv.RegisterOnShutdown(srv.CloseStreams)
 
 	stopSync, syncDone := startGitSync(gb, store, srv, *repoFlag, log)
 	defer stopSync()

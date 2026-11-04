@@ -36,11 +36,14 @@ type Server struct {
 
 	statusMu   sync.Mutex
 	statusSubs map[chan struct{}]struct{}
+	// streamsDone ends the status streams on shutdown (see CloseStreams).
+	streamsDone chan struct{}
+	streamsOnce sync.Once
 }
 
 // New returns a server over store and its attachments, serving the SPA from spa.
 func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logger) *Server {
-	s := &Server{store: store, blobs: blobStore, spa: spa, log: log, statusSubs: map[chan struct{}]struct{}{}}
+	s := &Server{store: store, blobs: blobStore, spa: spa, log: log, statusSubs: map[chan struct{}]struct{}{}, streamsDone: make(chan struct{})}
 	s.sync = websocket.NewServerWithPersistence(persistence{s: s})
 	s.sync.Logger = log
 	// A room is a board: refuse the upgrade for an id that names none, so a
