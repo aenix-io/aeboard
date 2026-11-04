@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canMoveFolder, countIn, filterKind, inFolder, pathOf, search } from './library';
+import { canMoveFolder, countIn, entriesOf, filterKind, inFolder, pathOf, placeAt, search } from './library';
 
 // work/
 //   meetings/
@@ -73,5 +73,40 @@ describe('countIn / search / filterKind', () => {
   it('keeps one kind or all', () => {
     expect(filterKind(docs, 'edgeless').map(d => d.id)).toEqual(['a']);
     expect(filterKind(docs, 'all').length).toBe(5);
+  });
+});
+
+describe('ordering', () => {
+  const fs = [
+    { id: 'f1', name: 'Zeta', parent: '' },
+    { id: 'f2', name: 'Alpha', parent: '' },
+  ];
+  const ds = [
+    { id: 'd1', title: 'Beta', mode: 'page' as const, folder: '' },
+    { id: 'd2', title: 'Gamma', mode: 'page' as const, folder: '' },
+  ];
+  it('without ranks, a folder lists its contents by name, folders and documents together', () => {
+    expect(entriesOf(fs, ds, '').map(e => e.name)).toEqual(['Alpha', 'Beta', 'Gamma', 'Zeta']);
+  });
+  it('the first drop into an unranked folder ranks it all, keeping what people saw', () => {
+    // Drag Zeta (f1) to the top.
+    const ps = placeAt(fs, ds, '', { kind: 'folder', id: 'f1' }, 0);
+    const ranked = <T extends { id: string; rank?: string }>(list: T[]): T[] =>
+      list.map(x => ({ ...x, rank: ps.find(p => p.id === x.id)?.rank ?? x.rank }));
+    expect(entriesOf(ranked(fs), ranked(ds), '').map(e => e.name)).toEqual(['Zeta', 'Alpha', 'Beta', 'Gamma']);
+  });
+  it('in a ranked folder, a drop writes one key, between the new neighbours', () => {
+    const rf = [
+      { id: 'f1', name: 'Zeta', parent: '', rank: 'c' },
+      { id: 'f2', name: 'Alpha', parent: '', rank: 'k' },
+    ];
+    const rd = [{ id: 'd1', title: 'Beta', mode: 'page' as const, folder: '', rank: 'r' }];
+    const ps = placeAt(rf, rd, '', { kind: 'doc', id: 'd1' }, 1); // between Zeta and Alpha
+    expect(ps.length).toBe(1);
+    expect(ps[0].rank > 'c' && ps[0].rank < 'k').toBe(true);
+  });
+  it('a document moved into another folder takes a key there', () => {
+    const ps = placeAt(fs, ds, 'f2', { kind: 'doc', id: 'd1' }, 0);
+    expect(ps).toEqual([{ kind: 'doc', id: 'd1', rank: 'i' }]);
   });
 });

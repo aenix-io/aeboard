@@ -1,10 +1,13 @@
 // The start page's folder logic — paths, contents, moves, search — kept out
 // of the components so it is tested on its own.
 
+import { compareRank, rankBetween } from './rank';
+
 export interface FolderNode {
   id: string;
   name: string;
   parent: string;
+  rank?: string;
 }
 
 export interface DocNode {
@@ -12,6 +15,26 @@ export interface DocNode {
   title: string;
   mode: 'edgeless' | 'page';
   folder: string;
+  rank?: string;
+}
+
+/** An entry of a folder, folder or document, in the folder's order. */
+export type Entry<D extends DocNode = DocNode> =
+  | { kind: 'folder'; id: string; rank?: string; name: string; folder: FolderNode }
+  | { kind: 'doc'; id: string; rank?: string; name: string; doc: D };
+
+const byRankThenName = (a: { rank?: string; name: string; id: string }, b: { rank?: string; name: string; id: string }) =>
+  compareRank(a, b, () => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+
+/** entriesOf is a folder's contents in its order — the order people set by
+ *  dragging (rank), then the rest by name — folders and documents together. */
+export function entriesOf<D extends DocNode>(folders: FolderNode[], docs: D[], id: string): Entry<D>[] {
+  const here = inFolder(folders, docs, id);
+  const all: Entry<D>[] = [
+    ...here.folders.map(f => ({ kind: 'folder' as const, id: f.id, rank: f.rank, name: f.name, folder: f })),
+    ...here.docs.map(d => ({ kind: 'doc' as const, id: d.id, rank: d.rank, name: d.title || '\uffff', doc: d })),
+  ];
+  return all.sort(byRankThenName);
 }
 
 /** pathOf is the chain of folders from the top level down to id (inclusive);
@@ -36,8 +59,12 @@ export function inFolder<D extends DocNode>(
 ): { folders: FolderNode[]; docs: D[] } {
   const known = new Set(folders.map(f => f.id));
   return {
-    folders: folders.filter(f => f.parent === id).sort((a, b) => a.name.localeCompare(b.name)),
-    docs: docs.filter(d => (known.has(d.folder) ? d.folder : '') === id),
+    folders: folders
+      .filter(f => f.parent === id)
+      .sort((a, b) => byRankThenName(a, b)),
+    docs: docs
+      .filter(d => (known.has(d.folder) ? d.folder : '') === id)
+      .sort((a, b) => byRankThenName({ ...a, name: a.title || '\uffff' }, { ...b, name: b.title || '\uffff' })),
   };
 }
 
@@ -80,4 +107,44 @@ export type KindFilter = 'all' | 'edgeless' | 'page';
 /** filterKind keeps the documents of one kind (all of them for "all"). */
 export function filterKind<T extends { mode: 'edgeless' | 'page' }>(docs: T[], kind: KindFilter): T[] {
   return kind === 'all' ? docs : docs.filter(d => d.mode === kind);
+}
+
+/** A rank to write: an item and its new key. */
+export interface Placement {
+  kind: 'folder' | 'doc';
+  id: string;
+  rank: string;
+}
+
+/** placeAt computes where item lands when dropped at `index` of folder
+ *  `parent`'s entries (counted without the item itself). Usually that is one
+ *  new key for the item, between its new neighbours. When the folder still
+ *  has unranked entries (nobody has ordered it yet), the whole folder is
+ *  ranked in its current order first, so the drop keeps what people see. */
+export function placeAt(
+  folders: FolderNode[],
+  docs: DocNode[],
+  parent: string,
+  item: { kind: 'folder' | 'doc'; id: string },
+  index: number,
+): Placement[] {
+  const siblings = entriesOf(folders, docs, parent).filter(e => !(e.kind === item.kind && e.id === item.id));
+  const at = Math.max(0, Math.min(index, siblings.length));
+  if (siblings.every(e => e.rank)) {
+    const prev = siblings[at - 1]?.rank ?? '';
+    const next = siblings[at]?.rank ?? '';
+    return [{ ...item, rank: rankBetween(prev, next) }];
+  }
+  const order: Array<{ kind: 'folder' | 'doc'; id: string; rank?: string }> = [
+    ...siblings.slice(0, at),
+    item,
+    ...siblings.slice(at),
+  ];
+  const out: Placement[] = [];
+  let prev = '';
+  for (const e of order) {
+    prev = rankBetween(prev, '');
+    if (e === item || e.rank !== prev) out.push({ kind: e.kind, id: e.id, rank: prev });
+  }
+  return out;
 }

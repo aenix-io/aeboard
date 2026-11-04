@@ -42,7 +42,10 @@ type Meta struct {
 	// block's title); the store keeps the two in step.
 	Title string `json:"title"`
 	// Folder is the folder the document is in; "" is the top level.
-	Folder  string    `json:"folder"`
+	Folder string `json:"folder"`
+	// Rank orders the document among its folder's contents (see ValidRank);
+	// "" sorts after the ranked ones, by title.
+	Rank    string    `json:"rank,omitempty"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 }
@@ -83,6 +86,8 @@ type Patch struct {
 	Title *string `json:"title,omitempty"`
 	// Folder moves the document ("" is the top level).
 	Folder *string `json:"folder,omitempty"`
+	// Rank places it among its folder's contents.
+	Rank *string `json:"rank,omitempty"`
 }
 
 // Snapshot is one board as a backend stores it.
@@ -114,6 +119,10 @@ type Store struct {
 	folders      map[string]Folder
 	foldersDirty bool
 	foldersGen   uint64
+	// catalogVersion grows with every change to the catalog — documents
+	// created, moved, ordered, renamed, folders — so browsers know to fetch
+	// the list again (it rides on the status stream).
+	catalogVersion uint64
 	// flushMu serialises flushes so two never write the same board at once.
 	flushMu sync.Mutex
 	// changed is signalled (non-blocking) on every new dirty mark.
@@ -268,6 +277,7 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 		state: state,
 	}
 	s.boards[id] = b
+	s.catalogVersion++
 	s.markLocked(b, actor)
 	m := cloneMeta(b.meta)
 	s.mu.Unlock()
@@ -310,6 +320,13 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 		}
 		m.Title = title
 	}
+	if p.Rank != nil {
+		if !ValidRank(*p.Rank) {
+			s.mu.Unlock()
+			return Meta{}, nil, fmt.Errorf("%w: rank %q", ErrInvalid, *p.Rank)
+		}
+		m.Rank = *p.Rank
+	}
 	if p.Folder != nil {
 		if !s.liveFolderLocked(*p.Folder) {
 			s.mu.Unlock()
@@ -319,6 +336,7 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 	}
 	m.Updated = s.now().UTC()
 	b.meta = m
+	s.catalogVersion++
 	s.markLocked(b, actor)
 	out := cloneMeta(m)
 	s.mu.Unlock()
@@ -366,7 +384,10 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 		return false, nil
 	}
 	b.state = merged
-	b.meta.Title = DocTitle(merged)
+	if t := DocTitle(merged); t != b.meta.Title {
+		b.meta.Title = t
+		s.catalogVersion++
+	}
 	b.meta.Updated = s.now().UTC()
 	if len(editors) == 0 {
 		s.markLocked(b, "")
@@ -402,12 +423,14 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			m := r.Meta
 			normMeta(&m)
 			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State)}
+			s.catalogVersion++
 			continue
 		}
 		if r.Meta.Updated.After(b.meta.Updated) {
 			m := r.Meta
 			normMeta(&m)
 			b.meta = m
+			s.catalogVersion++
 		}
 		if len(r.State) == 0 {
 			continue
@@ -428,8 +451,9 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			return gained, fmt.Errorf("board %s: %w", id, err)
 		}
 		b.state = merged
-		if t := DocTitle(merged); t != "" {
+		if t := DocTitle(merged); t != "" && t != b.meta.Title {
 			b.meta.Title = t
+			s.catalogVersion++
 		}
 		gained[id] = diff
 	}
@@ -491,6 +515,13 @@ func (s *Store) markLocked(b *board, editor string) {
 	case s.changed <- struct{}{}:
 	default:
 	}
+}
+
+// CatalogVersion grows whenever the catalog changes (see catalogVersion).
+func (s *Store) CatalogVersion() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.catalogVersion
 }
 
 // Pending is the number of boards with changes not yet written to the
@@ -678,6 +709,25 @@ func newID() string {
 		b[i] = idAlphabet[int(b[i])%len(idAlphabet)]
 	}
 	return string(b[:])
+}
+
+// ValidRank reports whether a rank key is well formed: digits and lower
+// case letters (base 36, compared bytewise), not ending in '0' (so there is
+// always room for another key between two), at most 64 characters; "" is
+// "no rank".
+func ValidRank(r string) bool {
+	if r == "" {
+		return true
+	}
+	if len(r) > 64 || strings.HasSuffix(r, "0") {
+		return false
+	}
+	for _, c := range r {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidID reports whether id has the shape newID produces, so a request

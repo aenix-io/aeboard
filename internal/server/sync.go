@@ -29,6 +29,10 @@ type SyncStatus struct {
 	UnpushedSince *time.Time `json:"unpushedSince,omitempty"`
 	// Error is the last sync failure, cleared by the next success.
 	Error string `json:"error,omitempty"`
+	// Catalog grows with every change to the document list (documents,
+	// folders, order, titles): a browser that sees it move fetches the list
+	// again, so the structure updates for everyone at once.
+	Catalog uint64 `json:"catalog"`
 }
 
 // BackendStatus reports the backend's side of SyncStatus (everything but
@@ -45,6 +49,7 @@ func (s *Server) Status() SyncStatus {
 		st = s.backendStatus()
 	}
 	st.Pending = s.store.Pending()
+	st.Catalog = s.store.CatalogVersion()
 	return st
 }
 

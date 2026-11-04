@@ -3,8 +3,11 @@ package boards
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/reearth/ygo/crdt"
 )
 
 func folderNames(fs []Folder) []string {
@@ -137,5 +140,65 @@ func TestFoldersFileRoundTrip(t *testing.T) {
 	}
 	if none, err := DecodeFolders(nil); err != nil || none != nil {
 		t.Fatalf("no file = %v %v", none, err)
+	}
+}
+
+func TestRanks(t *testing.T) {
+	s := open(t, &countingBackend{})
+	f, _ := s.CreateFolder("F", "")
+	d, _ := s.Create(CreateInput{}, "")
+	r := "i"
+	if got, _, err := s.Update(d.ID, Patch{Rank: &r}, ""); err != nil || got.Rank != "i" {
+		t.Fatalf("doc rank = %+v %v", got, err)
+	}
+	if got, err := s.UpdateFolder(f.ID, FolderPatch{Rank: &r}); err != nil || got.Rank != "i" {
+		t.Fatalf("folder rank = %+v %v", got, err)
+	}
+	for _, bad := range []string{"A", "a0", "a-b", strings.Repeat("z", 65)} {
+		if _, _, err := s.Update(d.ID, Patch{Rank: &bad}, ""); !errors.Is(err, ErrInvalid) {
+			t.Errorf("rank %q accepted: %v", bad, err)
+		}
+	}
+	empty := ""
+	if got, _, _ := s.Update(d.ID, Patch{Rank: &empty}, ""); got.Rank != "" {
+		t.Fatalf("clearing the rank kept %q", got.Rank)
+	}
+}
+
+// Every change to the catalog moves its version; edits that do not touch
+// the catalog (a stroke on a board) do not.
+func TestCatalogVersion(t *testing.T) {
+	s := open(t, &countingBackend{})
+	v := s.CatalogVersion()
+	step := func(what string) {
+		t.Helper()
+		if nv := s.CatalogVersion(); nv <= v {
+			t.Fatalf("%s did not move the catalog version", what)
+		} else {
+			v = nv
+		}
+	}
+	f, _ := s.CreateFolder("F", "")
+	step("create folder")
+	d, _ := s.Create(CreateInput{Title: "D"}, "")
+	step("create document")
+	r := "i"
+	_, _, _ = s.Update(d.ID, Patch{Rank: &r}, "")
+	step("order")
+	_, _ = s.UpdateFolder(f.ID, FolderPatch{Rank: &r})
+	step("order a folder")
+	st, _ := s.LoadState(d.ID)
+	upd, _ := titleUpdate(st, "D2")
+	_, _ = s.ApplyUpdate(d.ID, upd)
+	step("a title typed in the document")
+	st, _ = s.LoadState(d.ID)
+	doc := crdt.New(crdt.WithClientID(77))
+	_ = crdt.ApplyUpdateV1(doc, st, nil)
+	sv := doc.StateVector()
+	m := doc.GetMap("blocks")
+	doc.Transact(func(txn *crdt.Transaction) { m.Set(txn, "stroke", "x") })
+	_, _ = s.ApplyUpdate(d.ID, crdt.EncodeStateAsUpdateV1(doc, sv))
+	if s.CatalogVersion() != v {
+		t.Fatal("an edit that leaves the catalog alone moved its version")
 	}
 }
