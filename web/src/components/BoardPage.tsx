@@ -7,8 +7,8 @@ import { api, type Board } from '../api';
 import { homePath, isInside } from '../library';
 import { navigate } from '../router';
 import { noteOpened, toggleFavorite, useFavorites } from '../prefs';
-import { MoreIcon, StarIcon } from './icons';
-import { RowMenu } from './RowMenu';
+import { MenuIcons, MoreIcon, StarIcon } from './icons';
+import { type MenuItem, RowMenu } from './RowMenu';
 import { Confirm } from './Confirm';
 
 interface Props {
@@ -102,13 +102,13 @@ function DocActions({
   const doc = cat.docs?.find(d => d.id === id);
   const mode = doc?.mode ?? fallbackMode;
   const other = mode === 'page' ? 'edgeless' : 'page';
-  const items: Array<[string, () => void]> = [];
+  const items: MenuItem[] = [];
   // Opened from a shortcut: the way to the original, and making the
   // shortcut's place the document's own (not when the shortcut's document
   // lives inside this one: it would go inside itself).
   const trail = cat.trail?.doc === id && cat.trail.shortcut ? cat.trail : null;
   const from = trail?.path.at(-1)?.kind === 'doc' ? trail.path.at(-1)!.id : '';
-  if (trail) items.push(['Go to original', () => cat.setTrail(null)]);
+  if (trail) items.push(['Go to original', () => cat.setTrail(null), <MenuIcons.original key="i" />]);
   if (trail && canWrite && from && from !== id && !isInside(cat.docs ?? [], from, id)) {
     items.push([
       'Make this the original',
@@ -118,6 +118,7 @@ function DocActions({
           // Now it lives where it was opened from: its own place is the path.
           .then(() => cat.setTrail(null))
           .catch(() => {}),
+      <MenuIcons.page key="i" />,
     ]);
   }
   if (canWrite && doc && !doc.trashed) {
@@ -127,8 +128,9 @@ function DocActions({
         cat.patchDoc(id, { mode: other });
         void api.updateBoard(id, { mode: other }).then(cat.reload, () => cat.reload());
       },
+      other === 'page' ? <MenuIcons.page key="i" /> : <MenuIcons.board key="i" />,
     ]);
-    items.push(['Move to trash', onTrash]);
+    items.push(['Move to trash', onTrash, <MenuIcons.trash key="i" />]);
   }
   return (
     <span className="doc-actions">

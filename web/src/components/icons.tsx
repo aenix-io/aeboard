@@ -2,6 +2,9 @@
 // Folders keep a yellow, open/closed pair of their own.
 import {
   AllDocsIcon,
+  DuplicateIcon,
+  EditIcon,
+  UnlinkIcon,
   ArrowRightSmallIcon,
   DeleteIcon,
   EdgelessIcon,
@@ -73,3 +76,17 @@ export function FolderIcon({ open = false }: { open?: boolean }) {
     </svg>
   );
 }
+
+/** Icons for menu entries, a little smaller than the tree's. */
+export const MenuIcons = {
+  rename: sized(EditIcon, 16),
+  folder: () => <AffineFolderIcon width={16} height={16} aria-hidden="true" />,
+  page: sized(AffinePageIcon, 16),
+  board: sized(EdgelessIcon, 16),
+  favorite: sized(FavoriteIcon, 16),
+  favorited: sized(FavoritedIcon, 16),
+  trash: sized(DeleteIcon, 16),
+  original: sized(LinkedPageIcon, 16),
+  copy: sized(DuplicateIcon, 16),
+  unlink: sized(UnlinkIcon, 16),
+};
