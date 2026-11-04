@@ -4,6 +4,7 @@ import type { Board, Folder } from '../api';
 import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../catalog';
 import { childrenOf, type Entry, entriesOf, pathOf, topLevel } from '../library';
 import { navigate, type Route } from '../router';
+import { type Container, type Drop, levelAt, resolveDrop, type RowCtx, type Zone } from '../tree';
 import { untitled } from './BoardPage';
 import { BoardIcon, FolderIcon, McpIcon, PageIcon, TrashIcon } from './icons';
 import { Confirm } from './Confirm';
@@ -39,11 +40,11 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   const closeMcp = useCallback(() => setMcpOpen(false), []);
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
-  // Where a drag would land on a row: before it, after it, or into it (a
-  // folder's middle).
-  // "first" is the bottom edge of an open folder: the item goes in as its
-  // first entry, which is where the line under the folder's row points.
-  const [dropAt, setDropAt] = useState<{ id: string; pos: DropPos } | null>(null);
+  // Where a drag would land: the row under the pointer, the zone of it and
+  // what that means (see resolveDrop).
+  // Keyed by the row's place in the tree: a document linked from two
+  // documents has two rows, and only the one under the pointer takes it.
+  const [dropAt, setDropAt] = useState<{ node: string; zone: Zone; drop: Drop } | null>(null);
   // The folder an inline "new folder" field is open in, or null.
   const [newFolderIn, setNewFolderIn] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -58,7 +59,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
 
   // Open the way down to where the visitor is.
   useEffect(() => {
-    const up = pathOf(cat.folders, currentFolder).map(f => f.id);
+    const up = pathOf(cat.folders, currentFolder).map(f => `f:${f.id}`);
     if (up.every(id => expanded.has(id))) return;
     const next = new Set(expanded);
     up.forEach(id => next.add(id));
@@ -75,7 +76,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   };
 
   const createDoc = async (mode: Mode, folder: string) => {
-    if (folder) toggle(folder, true);
+    if (folder) toggle(`f:${folder}`, true);
     try {
       const b = await cat.createDoc(mode, folder);
       navigate(`/b/${b.id}`);
@@ -127,7 +128,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       setDropTarget(null);
       const item = dragData(e);
       if (item && cat.accepts(item, target)) {
-        if (target) toggle(target, true);
+        if (target) toggle(`f:${target}`, true);
         void cat.move(item, target).catch(() => {});
       }
     },
@@ -140,8 +141,11 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     navigate(href);
   };
 
-  const renderLevel = (parent: string, depth: number): ReactNode => {
+  // renderLevel draws a folder's contents ("" is the top level); up are the
+  // rows it is under, for drops that take an item out to their levels.
+  const renderLevel = (parent: string, depth: number, up: RowCtx[]): ReactNode => {
     const entries = entriesOf(cat.folders, placed, parent);
+    const container: Container = { kind: 'folder', id: parent };
     return (
       <>
         {newFolderIn === parent && (
@@ -155,9 +159,12 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
             }}
           />
         )}
-        {entries.map(e =>
-          e.kind === 'folder' ? folderRow(e.folder, depth, parent) : docRow(e.doc, depth, { parent, node: `d:${e.id}` }),
-        )}
+        {entries.map((e, i) => {
+          const last = i === entries.length - 1;
+          return e.kind === 'folder'
+            ? folderRow(e.folder, { node: `f:${e.id}`, container, depth, last, up })
+            : docRow(e.doc, { node: `${parent ? `f:${parent}` : ''}/d:${e.id}`, container, depth, last, up });
+        })}
         {entries.length === 0 && newFolderIn !== parent && depth > 0 && (
           <div className="sb-empty" style={{ paddingLeft: indent(depth) + 22 }}>
             Empty
@@ -167,31 +174,67 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     );
   };
 
-  // rowDrop makes a row take drops: on its top or bottom edge the dragged
-  // item goes before or after it (in the row's folder), on a folder's middle
-  // into that folder, on an open folder's bottom edge in as its first entry,
-  // on a document's middle inside that document. A document shown inside
-  // another (linked: its place is the parent's text) only takes "into".
-  const rowDrop = (entry: { kind: 'folder' | 'doc'; id: string }, parent: string, linked = false) => ({
+  // accepts reports whether item may land where drop says.
+  const accepts = (item: Dragged | null, d: Drop): boolean => {
+    if (!item || !cat.canWrite) return false;
+    if (d.container.kind === 'doc') return cat.acceptsChild(item, d.container.id);
+    // A folder may not go below itself.
+    if (item.kind === 'folder') {
+      const at = d.container.id;
+      return at !== item.id && !pathOf(cat.folders, at).some(f => f.id === item.id);
+    }
+    return true;
+  };
+
+  // land carries out a drop.
+  const land = (item: Dragged, d: Drop, row: RowCtx) => {
+    // Next to itself is where it already is.
+    if ((d.before ?? d.after) === item.id) return;
+    // Open the row it goes into, so the item shows where it went.
+    if (d.container.id === row.id) toggle(row.node, true);
+    if (d.container.kind === 'doc') {
+      void cat.placeChild(item, d.container.id, { before: d.before, after: d.after, first: d.first }).catch(() => {});
+      return;
+    }
+    const folder = d.container.id;
+    const siblings = entriesOf(cat.folders, placed, folder).filter(
+      (x: Entry) => !(x.kind === item.kind && x.id === item.id),
+    );
+    const anchor = d.before ?? d.after;
+    let index = siblings.length;
+    if (d.first) index = 0;
+    else if (anchor) {
+      const k = siblings.findIndex(x => x.id === anchor);
+      index = k < 0 ? siblings.length : d.after ? k + 1 : k;
+    }
+    void cat.place(item, folder, index).catch(() => {});
+  };
+
+  // rowDrop makes a row take drops (see resolveDrop): its top edge puts the
+  // item before it, its bottom edge after it (first inside it when it is
+  // open; out to an outer level, picked by the pointer, below a level's
+  // last row), its middle inside it.
+  const rowDrop = (row: RowCtx) => ({
     onDragOver: (e: DragEvent<HTMLDivElement>) => {
       if (!cat.canWrite || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
       e.preventDefault();
       e.stopPropagation();
-      e.dataTransfer.dropEffect = 'move';
       const r = e.currentTarget.getBoundingClientRect();
       const y = (e.clientY - r.top) / r.height;
-      let pos: DropPos = linked ? 'into' : y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into';
-      if (pos === 'after' && entry.kind === 'folder' && expanded.has(entry.id)) pos = 'first';
-      if (pos === 'into' && entry.kind === 'doc' && dragging.current && !cat.acceptsChild(dragging.current, entry.id)) {
+      const zone: Zone = y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into';
+      const d = resolveDrop(row, zone, levelAt(e.clientX, r.left, indent, row.depth));
+      const item = dragging.current;
+      if (item && (!accepts(item, d) || (item.kind === row.kind && item.id === row.id && zone === 'into'))) {
         e.dataTransfer.dropEffect = 'none';
-        setDropAt(d => (d?.id === entry.id ? null : d));
+        setDropAt(x => (x?.node === row.node ? null : x));
         return;
       }
-      setDropAt(d => (d?.id === entry.id && d.pos === pos ? d : { id: entry.id, pos }));
+      e.dataTransfer.dropEffect = 'move';
+      setDropAt(x => (x?.node === row.node && x.zone === zone && x.drop.level === d.level ? x : { node: row.node, zone, drop: d }));
     },
     onDragLeave: (e: DragEvent<HTMLDivElement>) => {
       if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-      setDropAt(d => (d?.id === entry.id ? null : d));
+      setDropAt(x => (x?.node === row.node ? null : x));
     },
     onDrop: (e: DragEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -199,56 +242,35 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       const at = dropAt;
       setDropAt(null);
       const item = dragData(e);
-      if (!item || !at || at.id !== entry.id || (item.kind === entry.kind && item.id === entry.id)) return;
-      if (at.pos === 'into' && entry.kind === 'doc') {
-        if (cat.acceptsChild(item, entry.id)) void cat.addChild(entry.id, item.id).catch(() => {});
-        return;
-      }
-      if (at.pos === 'into') {
-        if (cat.accepts(item, entry.id)) {
-          toggle(entry.id, true);
-          void cat.move(item, entry.id).catch(() => {});
-        }
-        return;
-      }
-      if (at.pos === 'first') {
-        if (item.kind === 'folder' && (entry.id === item.id || pathOf(cat.folders, entry.id).some(f => f.id === item.id))) return;
-        void cat.place(item, entry.id, 0).catch(() => {});
-        return;
-      }
-      // A folder may not go below itself.
-      if (item.kind === 'folder' && (parent === item.id || pathOf(cat.folders, parent).some(f => f.id === item.id))) return;
-      const siblings = entriesOf(cat.folders, placed, parent).filter(
-        (x: Entry) => !(x.kind === item.kind && x.id === item.id),
-      );
-      const i = siblings.findIndex(x => x.kind === entry.kind && x.id === entry.id);
-      void cat.place(item, parent, at.pos === 'before' ? i : i + 1).catch(() => {});
+      if (!item || !at || at.node !== row.node || !accepts(item, at.drop)) return;
+      if (item.kind === row.kind && item.id === row.id && !at.drop.before && !at.drop.after) return;
+      land(item, at.drop, row);
     },
-    'data-drop-pos': dropAt?.id === entry.id ? dropAt.pos : undefined,
+    'data-drop-pos': dropAt?.node === row.node && dropAt.zone === 'into' ? 'into' : undefined,
   });
 
   // dropLine is the line showing where a drop lands, indented to the level
-  // the item will be at: the row's own for before/after, one deeper for an
-  // open folder's first entry.
-  const dropLine = (id: string, depth: number) => {
-    if (dropAt?.id !== id || dropAt.pos === 'into') return null;
-    const level = dropAt.pos === 'first' ? depth + 1 : depth;
+  // the item will be at.
+  const dropLine = (row: RowCtx) => {
+    if (dropAt?.node !== row.node || dropAt.zone === 'into') return null;
     return (
       <span
-        className={`sb-drop-line sb-drop-${dropAt.pos === 'before' ? 'top' : 'bottom'}`}
-        style={{ left: indent(level) + 20 }}
+        className={`sb-drop-line sb-drop-${dropAt.zone === 'before' ? 'top' : 'bottom'}`}
+        style={{ left: indent(dropAt.drop.level) + 20 }}
         aria-hidden="true"
       />
     );
   };
 
-  const folderRow = (f: Folder, depth: number, parent: string) => {
-    const open = expanded.has(f.id);
+  type Place = { node: string; container: Container; depth: number; last: boolean; up: RowCtx[] };
+
+  const folderRow = (f: Folder, at: Place) => {
+    const open = expanded.has(at.node);
     if (renaming === f.id) {
       return (
         <NameRow
-          key={f.id}
-          depth={depth}
+          key={at.node}
+          depth={at.depth}
           initial={f.name}
           placeholder="Folder name"
           onCancel={() => setRenaming(null)}
@@ -259,25 +281,26 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
         />
       );
     }
+    const row: RowCtx = { kind: 'folder', id: f.id, node: at.node, container: at.container, depth: at.depth, last: at.last, open, up: at.up };
     return (
-      <div key={f.id} className="sb-node">
+      <div key={at.node} className="sb-node">
         <div
           className="sb-row"
-          style={{ paddingLeft: indent(depth) }}
+          style={{ paddingLeft: indent(at.depth) }}
           {...drag({ kind: 'folder', id: f.id })}
-          {...rowDrop({ kind: 'folder', id: f.id }, parent)}
+          {...rowDrop(row)}
         >
-          {dropLine(f.id, depth)}
+          {dropLine(row)}
           <button
             type="button"
             className="sb-caret"
             aria-label={open ? `Collapse ${f.name}` : `Expand ${f.name}`}
             aria-expanded={open}
-            onClick={() => toggle(f.id)}
+            onClick={() => toggle(at.node)}
           >
             {open ? '▾' : '▸'}
           </button>
-          <button type="button" className="sb-label sb-folder-label" aria-expanded={open} onClick={() => toggle(f.id)}>
+          <button type="button" className="sb-label sb-folder-label" aria-expanded={open} onClick={() => toggle(at.node)}>
             <span className="kind kind-folder">
               <FolderIcon />
             </span>
@@ -294,7 +317,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
                   [
                     'New folder',
                     () => {
-                      toggle(f.id, true);
+                      toggle(at.node, true);
                       setNewFolderIn(f.id);
                     },
                   ],
@@ -311,29 +334,31 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
             </span>
           )}
         </div>
-        {open && renderLevel(f.id, depth + 1)}
+        {open && renderLevel(f.id, at.depth + 1, [...at.up, row])}
       </div>
     );
   };
 
-  // docRow is a document and, expanded, the documents it links to. `at` is
-  // where it shows: the folder level (parent) or inside another document
-  // (linked); node keys its expanded state, per place it shows in.
-  const docRow = (d: Board, depth: number, at: { parent: string; node: string; linked?: boolean; above?: Set<string> }) => {
-    const above = at.above ?? new Set<string>();
+  // docRow is a document and, expanded, the documents it links to. A
+  // document shows wherever it is linked from, so a row is keyed by its
+  // path (node), not by the document.
+  const docRow = (d: Board, at: Place) => {
+    const above = new Set(at.up.filter(r => r.kind === 'doc').map(r => r.id));
     // A document already open above (a cycle) does not repeat below itself.
     const kids = childrenOf(docs, d).filter(c => !above.has(c.id) && c.id !== d.id);
     const open = kids.length > 0 && expanded.has(at.node);
     const label = d.title || untitled(d.mode);
+    const linked = at.container.kind === 'doc';
+    const row: RowCtx = { kind: 'doc', id: d.id, node: at.node, container: at.container, depth: at.depth, last: at.last, open, up: at.up };
     return (
       <div key={at.node} className="sb-node">
         <div
           className={`sb-row${d.id === currentDoc ? ' sb-active' : ''}`}
-          style={{ paddingLeft: indent(depth) }}
-          {...drag({ kind: 'doc', id: d.id })}
-          {...rowDrop({ kind: 'doc', id: d.id }, at.parent, at.linked)}
+          style={{ paddingLeft: indent(at.depth) }}
+          {...drag({ kind: 'doc', id: d.id, from: linked ? at.container.id : undefined })}
+          {...rowDrop(row)}
         >
-          {dropLine(d.id, depth)}
+          {dropLine(row)}
           {kids.length > 0 ? (
             <button
               type="button"
@@ -348,7 +373,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
             <span className="sb-caret sb-caret-none" />
           )}
           <a className="sb-label" href={`/b/${d.id}`} onClick={go(`/b/${d.id}`)}>
-            <span className={`kind kind-${d.mode}${at.linked ? ' kind-linked' : ''}`}>
+            <span className={`kind kind-${d.mode}${linked ? ' kind-linked' : ''}`}>
               {d.mode === 'page' ? <PageIcon /> : <BoardIcon />}
             </span>
             <span className={`sb-name${d.title ? '' : ' sb-untitled'}`}>{label}</span>
@@ -368,12 +393,13 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           )}
         </div>
         {open &&
-          kids.map(c =>
-            docRow(c, depth + 1, {
-              parent: d.id,
+          kids.map((c, i) =>
+            docRow(c, {
               node: `${at.node}/${c.id}`,
-              linked: true,
-              above: new Set([...above, d.id]),
+              container: { kind: 'doc', id: d.id },
+              depth: at.depth + 1,
+              last: i === kids.length - 1,
+              up: [...at.up, row],
             }),
           )}
       </div>
@@ -400,7 +426,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
         )}
       </div>
       <div className="sb-tree">
-        {cat.docs === null ? <div className="sb-empty">Loading…</div> : renderLevel('', 0)}
+        {cat.docs === null ? <div className="sb-empty">Loading…</div> : renderLevel('', 0, [])}
         {/* The space below the tree takes drops to the top level. */}
         <div className="sb-rest" {...drop('')} />
       </div>
@@ -440,7 +466,6 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
 
 const indent = (depth: number) => 8 + depth * 14;
 
-type DropPos = 'before' | 'after' | 'into' | 'first';
 
 /** RowMenu is a row's small hover button with a dropdown. The list is fixed
  *  to the window (the tree scrolls and would clip it) and closes on a click

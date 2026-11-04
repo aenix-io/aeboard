@@ -104,7 +104,10 @@ export const api = {
   /** deleteBoard deletes a trashed document for good. */
   deleteBoard: (id: string) => call<void>('DELETE', `/boards/${id}`),
   /** addChild puts doc inside parent: a link to it at the end of parent. */
-  addChild: (parent: string, doc: string) => call<void>('POST', `/boards/${parent}/children`, { doc }),
+  addChild: (parent: string, doc: string, at: { before?: string; after?: string; first?: boolean } = {}) =>
+    call<void>('POST', `/boards/${parent}/children`, { doc, ...at }),
+  /** removeChild takes doc out of parent (its link lines there). */
+  removeChild: (parent: string, doc: string) => call<void>('DELETE', `/boards/${parent}/children/${doc}`),
   createFolder: (name: string, parent: string) => call<Folder>('POST', '/folders', { name, parent }),
   updateFolder: (id: string, patch: { name?: string; parent?: string; rank?: string }) =>
     call<Folder>('PATCH', `/folders/${id}`, patch),

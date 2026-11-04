@@ -7,8 +7,9 @@ import { canMoveFolder, placeAt, topLevel } from './library';
 
 export type Mode = 'edgeless' | 'page';
 
-/** What is being dragged: a document or a folder. */
-export type Dragged = { kind: 'doc' | 'folder'; id: string };
+/** What is being dragged: a document or a folder. from is the document a
+ *  document is dragged out of (it shows inside it), so a move takes it out. */
+export type Dragged = { kind: 'doc' | 'folder'; id: string; from?: string };
 
 export const DRAG_TYPE = 'application/x-aenotes-item';
 
@@ -27,7 +28,8 @@ export function expectChild(parent: string, child: string): void {
 export function dragData(e: React.DragEvent): Dragged | null {
   try {
     const v = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)) as Dragged;
-    return v && (v.kind === 'doc' || v.kind === 'folder') && typeof v.id === 'string' ? v : null;
+    if (!v || (v.kind !== 'doc' && v.kind !== 'folder') || typeof v.id !== 'string') return null;
+    return { kind: v.kind, id: v.id, from: typeof v.from === 'string' ? v.from : undefined };
   } catch {
     return null;
   }
@@ -50,6 +52,10 @@ export interface Catalog {
   /** place puts item at `index` of folder `parent`'s entries (counted
    *  without the item): the order people set by dragging. */
   place(item: Dragged, parent: string, index: number): Promise<void>;
+  /** placeChild puts a document among parent's children: before or after
+   *  a sibling, first, or at the end; dragged out of another document, it
+   *  leaves that one. */
+  placeChild(item: Dragged, parent: string, at: { before?: string; after?: string; first?: boolean }): Promise<void>;
   createDoc(mode: Mode, folder: string, title?: string): Promise<Board>;
   /** createChild makes a new document inside parent (linked from it). */
   createChild(mode: Mode, parent: string): Promise<Board>;
@@ -197,6 +203,10 @@ export function CatalogProvider({
         }),
       place: (item, parent, index) =>
         act(async () => {
+          if (item.from) {
+            setDocs(ds => ds?.map(d => (d.id === item.from ? { ...d, links: d.links?.filter(l => l !== item.id) } : d)) ?? ds);
+            await api.removeChild(item.from, item.id);
+          }
           // The order is among what the level shows: documents nested in
           // another one are not at the top.
           const ps = placeAt(folders, topLevel(folders, docs ?? []), parent, item, index);
@@ -230,10 +240,30 @@ export function CatalogProvider({
           await api.addChild(parent, b.id);
           return b;
         }),
-      acceptsChild: (item, parent) => {
-        if (!item || !canWrite || item.kind !== 'doc' || item.id === parent) return false;
-        return !(docs?.find(d => d.id === parent)?.links ?? []).includes(item.id);
-      },
+      acceptsChild: (item, parent) => !!item && canWrite && item.kind === 'doc' && item.id !== parent,
+      placeChild: (item, parent, at) =>
+        act(async () => {
+          // Show the new order at once; the reload confirms it.
+          setDocs(
+            ds =>
+              ds?.map(d => {
+                let links = d.links ?? [];
+                if (d.id === item.from || d.id === parent) links = links.filter(l => l !== item.id);
+                if (d.id !== parent) return links === d.links ? d : { ...d, links };
+                const anchor = at.before ?? at.after;
+                let i = anchor ? links.indexOf(anchor) : -1;
+                if (i >= 0 && at.after) i++;
+                if (at.first) i = 0;
+                if (i < 0) i = links.length;
+                return { ...d, links: [...links.slice(0, i), item.id, ...links.slice(i)] };
+              }) ?? ds,
+          );
+          // Out of the old place first: when that is refused (it is
+          // mentioned in the text there), nothing has moved and no copy is
+          // left behind.
+          if (item.from && item.from !== parent) await api.removeChild(item.from, item.id);
+          await api.addChild(parent, item.id, at);
+        }),
       addChild: (parent, doc) =>
         act(async () => {
           // Show it inside at once; the reload confirms it.
