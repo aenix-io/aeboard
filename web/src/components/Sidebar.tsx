@@ -446,6 +446,15 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     const canBeOriginal = !!from && from !== d.id && !isInside(docs, from, d.id);
     const items: Array<[string, () => void]> = shortcut
       ? [
+          [
+            'Go to original',
+            () => {
+              // Opened as itself, not from this row: the original's row
+              // shows open, and the path is to where it lives.
+              cat.setTrail(null);
+              navigate(`/b/${d.id}`);
+            },
+          ],
           ...(canBeOriginal
             ? [['Make this the original', () => from && void cat.makeOriginal(d.id, from).catch(() => {})] as [string, () => void]]
             : []),
@@ -461,7 +470,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           ['Remove shortcut', () => from && void cat.removeShortcut(d.id, from).catch(() => {})],
         ]
       : [['Move to trash', () => setTrashing(d)]];
-    items.unshift([favorites.includes(d.id) ? 'Remove from favorites' : 'Add to favorites', () => toggleFavorite(d.id)]);
+    items.splice(shortcut ? 1 : 0, 0, [favorites.includes(d.id) ? 'Remove from favorites' : 'Add to favorites', () => toggleFavorite(d.id)]);
     return (
       <div key={at.node} className="sb-node">
         <div
