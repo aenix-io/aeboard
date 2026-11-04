@@ -29,7 +29,9 @@ type Folder struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	// Parent is the containing folder; "" is the top level.
-	Parent  string    `json:"parent"`
+	Parent string `json:"parent"`
+	// Rank orders the folder among its parent's contents (see ValidRank).
+	Rank    string    `json:"rank,omitempty"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 	Deleted bool      `json:"deleted,omitempty"`
@@ -39,6 +41,7 @@ type Folder struct {
 type FolderPatch struct {
 	Name   *string `json:"name,omitempty"`
 	Parent *string `json:"parent,omitempty"`
+	Rank   *string `json:"rank,omitempty"`
 }
 
 // FolderBackend is the optional part of a Backend that stores folders.
@@ -172,6 +175,13 @@ func (s *Store) UpdateFolder(id string, p FolderPatch) (Folder, error) {
 		}
 		f.Name = name
 	}
+	if p.Rank != nil {
+		if !ValidRank(*p.Rank) {
+			s.mu.Unlock()
+			return Folder{}, fmt.Errorf("%w: rank %q", ErrInvalid, *p.Rank)
+		}
+		f.Rank = *p.Rank
+	}
 	if p.Parent != nil {
 		parent := *p.Parent
 		if !s.liveFolderLocked(parent) {
@@ -250,6 +260,7 @@ func (s *Store) MergeRemoteFolders(remote []Folder) {
 		for _, f := range merged {
 			s.folders[f.ID] = f
 		}
+		s.catalogVersion++
 	}
 	s.mu.Unlock()
 	if changed {
@@ -258,6 +269,7 @@ func (s *Store) MergeRemoteFolders(remote []Folder) {
 }
 
 func (s *Store) markFoldersLocked() {
+	s.catalogVersion++
 	s.foldersDirty = true
 	s.foldersGen++
 	select {
