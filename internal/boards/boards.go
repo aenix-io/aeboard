@@ -66,7 +66,16 @@ type CreateInput struct {
 	Mode  string
 	Title string
 	Tags  []string
+	// Blank starts the document with no blocks at all instead of the seed:
+	// the editor's "new doc" path (BlockSuite's createDefaultDoc) builds the
+	// root blocks itself in the creating browser, and a seed under them
+	// would make two roots. Only safe for a client-chosen, brand-new id that
+	// nobody else can be opening yet.
+	Blank bool
 }
+
+// emptyUpdate is a Yjs V1 update with nothing in it: no structs, no deletes.
+var emptyUpdate = []byte{0, 0}
 
 // Patch changes a board's metadata; nil fields are left as they are.
 type Patch struct {
@@ -201,7 +210,12 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 	}
 	title := strings.TrimSpace(in.Title)
 	state := seed.For(in.Mode)
-	if title != "" {
+	if in.Blank {
+		if in.ID == "" {
+			return Meta{}, fmt.Errorf("%w: a blank document needs a client-chosen id", ErrInvalid)
+		}
+		state = bytes.Clone(emptyUpdate)
+	} else if title != "" {
 		upd, err := titleUpdate(state, title)
 		if err != nil {
 			return Meta{}, err

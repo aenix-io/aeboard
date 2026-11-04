@@ -525,3 +525,28 @@ func TestLegacyBinaryStateIsReadThenReplacedByText(t *testing.T) {
 		t.Fatalf("text state lost the edit")
 	}
 }
+
+// A blank document (the editor builds its blocks) gets no seed — not even
+// when it is loaded before the creator's first update arrives — and its
+// title follows what the creator writes.
+func TestBlankDocumentGetsNoSeed(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, DirBackend{Root: dir})
+	if _, err := s.Create(CreateInput{Blank: true}, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("blank without an id: %v", err)
+	}
+	m, err := s.Create(CreateInput{ID: "bbbbbbbbbb", Mode: ModePage, Blank: true}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := s.LoadState(m.ID)
+	if keys := blockKeys(t, st); len(keys) != 0 {
+		t.Fatalf("blank document has blocks %v", keys)
+	}
+	_ = s.Flush(context.Background())
+	re := open(t, DirBackend{Root: dir})
+	st, _ = re.LoadState(m.ID)
+	if keys := blockKeys(t, st); len(keys) != 0 {
+		t.Fatalf("blank document grew a seed after a restart: %v", keys)
+	}
+}

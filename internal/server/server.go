@@ -130,12 +130,13 @@ func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
 		Mode  string   `json:"mode"`
 		Title string   `json:"title"`
 		Tags  []string `json:"tags"`
+		Blank bool     `json:"blank"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Tags: in.Tags}, s.login(r))
+	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Tags: in.Tags, Blank: in.Blank}, s.login(r))
 	if errors.Is(err, boards.ErrExists) {
 		writeError(w, http.StatusConflict, "a document with this id exists")
 		return
