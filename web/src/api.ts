@@ -4,14 +4,22 @@ export interface Board {
   id: string;
   mode: 'edgeless' | 'page';
   title: string;
-  tags: string[];
+  /** The folder the document is in; "" is the top level. */
+  folder: string;
   created: string;
   updated: string;
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  /** "" is the top level. */
+  parent: string;
+}
+
 export interface BoardList {
   boards: Board[];
-  tags: string[];
+  folders: Folder[];
 }
 
 /** Fired when the API answers 401: the session ended (expired, signed out
@@ -34,6 +42,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     }
     throw new Error(msg);
   }
+  if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
 }
 
@@ -82,8 +91,12 @@ export const api = {
   },
   listBoards: () => call<BoardList>('GET', '/boards'),
   getBoard: (id: string) => call<Board>('GET', `/boards/${id}`),
-  createBoard: (doc: { id?: string; mode?: 'edgeless' | 'page'; title?: string; tags?: string[]; blank?: boolean }) =>
+  createBoard: (doc: { id?: string; mode?: 'edgeless' | 'page'; title?: string; folder?: string; blank?: boolean }) =>
     call<Board>('POST', '/boards', doc),
-  updateBoard: (id: string, patch: { title?: string; tags?: string[] }) =>
+  updateBoard: (id: string, patch: { title?: string; folder?: string }) =>
     call<Board>('PATCH', `/boards/${id}`, patch),
+  createFolder: (name: string, parent: string) => call<Folder>('POST', '/folders', { name, parent }),
+  updateFolder: (id: string, patch: { name?: string; parent?: string }) =>
+    call<Folder>('PATCH', `/folders/${id}`, patch),
+  deleteFolder: (id: string) => call<void>('DELETE', `/folders/${id}`),
 };

@@ -77,7 +77,7 @@ function Boards({
       {route.name === 'board' ? (
         <BoardPage key={route.id} id={route.id} userName={userName} canWrite={canWrite} whoami={whoami} />
       ) : (
-        <BoardList canWrite={canWrite} whoami={whoami} />
+        <BoardList key={route.folder} folder={route.folder} canWrite={canWrite} whoami={whoami} />
       )}
     </div>
   );

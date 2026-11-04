@@ -2,14 +2,14 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import type { DocSession } from '../board/editor';
 
-import { api, type Board } from '../api';
-import { navigate } from '../router';
-import { TagEditor } from './TagEditor';
+import { api, type Board, type Folder } from '../api';
+import { pathOf } from '../library';
+import { folderPath, navigate } from '../router';
 
 interface Props {
   id: string;
   userName: string;
-  /** False for a visitor with read access: title, tags and the board itself
+  /** False for a visitor with read access: the title and the board itself
    *  are shown, not edited (the server drops their writes anyway). */
   canWrite: boolean;
   whoami: ReactNode;
@@ -23,12 +23,12 @@ function viewFromURL(): View | undefined {
 }
 
 /** BoardPage is one document — a board or a page: a slim header (title,
- *  tags, the Board/Page switch) over the editor. */
+ *  its folder, the Board/Page switch) over the editor. */
 export function BoardPage({ id, userName, canWrite, whoami }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
   const [view, setView] = useState<View | undefined>(viewFromURL);
   const session = useRef<DocSession | null>(null);
-  const [known, setKnown] = useState<string[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const mount = useRef<HTMLDivElement>(null);
@@ -45,7 +45,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
       .catch(e => setError(String(e.message ?? e)));
     api
       .listBoards()
-      .then(l => setKnown(l.tags))
+      .then(l => setFolders(l.folders ?? []))
       .catch(() => {});
     return () => {
       document.title = 'aeboard';
@@ -103,7 +103,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
     history.replaceState(null, '', url);
   };
 
-  const save = async (patch: { title?: string; tags?: string[] }) => {
+  const save = async (patch: { title?: string }) => {
     try {
       const b = await api.updateBoard(id, patch);
       setBoard(b);
@@ -119,7 +119,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
       <div className="page">
         <p className="error">{error}</p>
         <button type="button" onClick={() => navigate('/')}>
-          Back to boards
+          Back
         </button>
       </div>
     );
@@ -129,19 +129,47 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
     <div className="board-page">
       <header className="board-head">
         <a
-          href="/"
+          href={folderPath(board?.folder ?? '')}
           className="back"
           onClick={e => {
             e.preventDefault();
-            navigate('/');
+            navigate(folderPath(board?.folder ?? ''));
           }}
         >
-          ← All
+          ←
         </a>
+        <nav className="crumbs crumbs-small" aria-label="Folder">
+          <a
+            href="/"
+            className="crumb"
+            onClick={e => {
+              e.preventDefault();
+              navigate('/');
+            }}
+          >
+            All
+          </a>
+          {board &&
+            pathOf(folders, board.folder).map(f => (
+              <span key={f.id} className="crumb-sep-wrap">
+                <span className="crumb-sep">/</span>
+                <a
+                  href={folderPath(f.id)}
+                  className="crumb"
+                  onClick={e => {
+                    e.preventDefault();
+                    navigate(folderPath(f.id));
+                  }}
+                >
+                  {f.name}
+                </a>
+              </span>
+            ))}
+          <span className="crumb-sep">/</span>
+        </nav>
         {board && !canWrite && (
           <>
             <h1 className="title-input title-static">{board.title || untitled(board.mode)}</h1>
-            <TagEditor tags={board.tags} readOnly onChange={() => {}} />
           </>
         )}
         {board && canWrite && (
@@ -161,7 +189,6 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
               }}
               onBlur={() => title !== board.title && save({ title })}
             />
-            <TagEditor tags={board.tags} known={known} onChange={tags => save({ tags })} />
           </>
         )}
         {error && board && <span className="error">{error}</span>}

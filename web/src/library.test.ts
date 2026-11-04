@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest';
+
+import { canMoveFolder, countIn, filterKind, inFolder, pathOf, search } from './library';
+
+// work/
+//   meetings/
+//     q4/
+// personal/
+const folders = [
+  { id: 'work', name: 'Work', parent: '' },
+  { id: 'meet', name: 'Meetings', parent: 'work' },
+  { id: 'q4', name: 'Q4', parent: 'meet' },
+  { id: 'pers', name: 'Personal', parent: '' },
+];
+const docs = [
+  { id: 'a', title: 'Roadmap', mode: 'edgeless' as const, folder: 'work' },
+  { id: 'b', title: 'Standup notes', mode: 'page' as const, folder: 'meet' },
+  { id: 'c', title: 'Q4 review', mode: 'page' as const, folder: 'q4' },
+  { id: 'd', title: 'Ideas', mode: 'page' as const, folder: '' },
+  { id: 'e', title: 'Orphan', mode: 'page' as const, folder: 'deleted-elsewhere' },
+];
+
+describe('pathOf', () => {
+  it('walks from the top level down to the folder', () => {
+    expect(pathOf(folders, 'q4').map(f => f.name)).toEqual(['Work', 'Meetings', 'Q4']);
+  });
+  it('is empty for the top level and for a folder that is not there', () => {
+    expect(pathOf(folders, '')).toEqual([]);
+    expect(pathOf(folders, 'nope')).toEqual([]);
+  });
+  it('stops on a cycle instead of looping', () => {
+    const loop = [
+      { id: 'x', name: 'X', parent: 'y' },
+      { id: 'y', name: 'Y', parent: 'x' },
+    ];
+    expect(pathOf(loop, 'x').length).toBe(2);
+  });
+});
+
+describe('inFolder', () => {
+  it('lists direct subfolders by name and the documents right there', () => {
+    const top = inFolder(folders, docs, '');
+    expect(top.folders.map(f => f.name)).toEqual(['Personal', 'Work']);
+    expect(top.docs.map(d => d.id)).toEqual(['d', 'e']);
+    expect(inFolder(folders, docs, 'work').docs.map(d => d.id)).toEqual(['a']);
+  });
+  it('shows a document whose folder is gone at the top level', () => {
+    expect(inFolder(folders, docs, '').docs.some(d => d.id === 'e')).toBe(true);
+  });
+});
+
+describe('canMoveFolder', () => {
+  it('refuses itself, its own subfolders and where it already is', () => {
+    expect(canMoveFolder(folders, 'work', 'work')).toBe(false);
+    expect(canMoveFolder(folders, 'work', 'q4')).toBe(false);
+    expect(canMoveFolder(folders, 'meet', 'work')).toBe(false);
+  });
+  it('allows a sibling or the top level', () => {
+    expect(canMoveFolder(folders, 'meet', 'pers')).toBe(true);
+    expect(canMoveFolder(folders, 'q4', '')).toBe(true);
+  });
+});
+
+describe('countIn / search / filterKind', () => {
+  it('counts documents in a folder and below it', () => {
+    expect(countIn(folders, docs, 'work')).toBe(3);
+    expect(countIn(folders, docs, 'pers')).toBe(0);
+  });
+  it('searches every folder, case-insensitively; nothing for an empty query', () => {
+    expect(search(docs, 'q4').map(d => d.id)).toEqual(['c']);
+    expect(search(docs, '  ')).toEqual([]);
+  });
+  it('keeps one kind or all', () => {
+    expect(filterKind(docs, 'edgeless').map(d => d.id)).toEqual(['a']);
+    expect(filterKind(docs, 'all').length).toBe(5);
+  });
+});

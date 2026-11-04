@@ -1,29 +1,9 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type DragEvent, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { api, type Board } from '../api';
-import { navigate } from '../router';
-import { filterBoards, filterKind, type KindFilter, parseTags, type TagSelection } from '../tags';
+import { api, type Board, type Folder } from '../api';
+import { canMoveFolder, countIn, filterKind, inFolder, type KindFilter, pathOf, search } from '../library';
+import { folderPath, navigate } from '../router';
 import { untitled } from './BoardPage';
-import { TagChips } from './TagChips';
-
-const SEL_KEY = 'aeboard.tagFilter';
-
-function loadSelection(): TagSelection {
-  try {
-    const v = JSON.parse(localStorage.getItem(SEL_KEY) ?? 'null');
-    return Array.isArray(v) && v.length ? (v as string[]) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveSelection(sel: TagSelection) {
-  try {
-    localStorage.setItem(SEL_KEY, JSON.stringify(sel));
-  } catch {
-    /* storage blocked */
-  }
-}
 
 const when = (iso: string) => {
   const d = new Date(iso);
@@ -33,62 +13,141 @@ const when = (iso: string) => {
     : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 };
 
-/** BoardList is the start page: every board, a tag filter, and "New board". */
-export function BoardList({ canWrite, whoami }: { canWrite: boolean; whoami: ReactNode }) {
-  const [boards, setBoards] = useState<Board[] | null>(null);
-  const [tags, setTags] = useState<string[]>([]);
+type Mode = 'edgeless' | 'page';
+/** What is being dragged: a document or a folder. */
+type Dragged = { kind: 'doc' | 'folder'; id: string };
+const DRAG_TYPE = 'application/x-aeboard-item';
+
+interface Props {
+  /** The folder on screen; "" is the top level. */
+  folder: string;
+  canWrite: boolean;
+  whoami: ReactNode;
+}
+
+/** BoardList is the start page: a folder of pages and boards, browsed like
+ *  files — breadcrumbs, subfolders, drag and drop between folders. */
+export function BoardList({ folder, canWrite, whoami }: Props) {
+  const [docs, setDocs] = useState<Board[] | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<TagSelection>(loadSelection);
   const [query, setQuery] = useState('');
+  const [kind, setKind] = useState<KindFilter>(loadKind);
   // The kind of document being created, or null while the form is closed.
   const [creating, setCreating] = useState<Mode | null>(null);
-  const [kind, setKind] = useState<KindFilter>(loadKind);
+  const [newFolder, setNewFolder] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [moving, setMoving] = useState<Dragged | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     api
       .listBoards()
       .then(l => {
-        setBoards(l.boards);
-        setTags(l.tags);
+        setDocs(l.boards);
+        setFolders(l.folders ?? []);
       })
       .catch(e => setError(String(e.message ?? e)));
   }, []);
+  useEffect(reload, [reload]);
 
-  // Drop selected tags that no board carries any more.
-  const selection = useMemo<TagSelection>(() => {
-    if (!selected) return null;
-    const live = selected.filter(t => tags.some(k => k.toLowerCase() === t.toLowerCase()));
-    return live.length ? live : null;
-  }, [selected, tags]);
-
-  const select = (sel: TagSelection) => {
-    setSelected(sel);
-    saveSelection(sel);
+  const act = async (f: () => Promise<unknown>) => {
+    try {
+      setError(null);
+      await f();
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    }
+    reload();
   };
 
-  const pickKind = (k: KindFilter) => {
-    setKind(k);
-    saveKind(k);
+  const moveInto = (item: Dragged, target: string) =>
+    act(() =>
+      item.kind === 'doc'
+        ? api.updateBoard(item.id, { folder: target })
+        : api.updateFolder(item.id, { parent: target }),
+    );
+
+  const accepts = (item: Dragged | null, target: string) => {
+    if (!item || !canWrite) return false;
+    if (item.kind === 'folder') return canMoveFolder(folders, item.id, target);
+    return docs?.find(d => d.id === item.id)?.folder !== target;
   };
 
-  const shown = boards ? filterKind(filterBoards(boards, selection, query), kind) : [];
-  const empty = boards !== null && boards.length === 0;
+  // Drag and drop: cards are dragged, folder tiles and breadcrumbs take them.
+  let dragged: Dragged | null = null;
+  const dragProps = (item: Dragged) =>
+    canWrite
+      ? {
+          draggable: true,
+          onDragStart: (e: DragEvent) => {
+            dragged = item;
+            e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(item));
+            e.dataTransfer.effectAllowed = 'move';
+          },
+        }
+      : {};
+  const dropProps = (target: string) => ({
+    onDragOver: (e: DragEvent) => {
+      if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      setDropTarget(target);
+    },
+    onDragLeave: () => setDropTarget(t => (t === target ? null : t)),
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      setDropTarget(null);
+      let item = dragged;
+      try {
+        item = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)) as Dragged;
+      } catch {
+        /* keep the local one */
+      }
+      if (item && accepts(item, target)) void moveInto(item, target);
+    },
+    'data-drop': dropTarget === target ? 'over' : undefined,
+  });
+
+  const path = pathOf(folders, folder);
+  const here = useMemo(() => inFolder(folders, docs ?? [], folder), [folders, docs, folder]);
+  const searching = query.trim() !== '';
+  const shownDocs = filterKind(searching ? search(docs ?? [], query) : here.docs, kind);
+  const shownFolders = searching ? [] : here.folders;
+  const missing = folder !== '' && docs !== null && path.length === 0;
+  const empty = docs !== null && !searching && shownFolders.length === 0 && here.docs.length === 0;
+
+  const open = (href: string) => (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    navigate(href);
+  };
 
   return (
     <div className="page">
       <header className="list-head">
-        <h1>Pages and boards</h1>
+        <nav className="crumbs" aria-label="Folder">
+          <a href="/" className="crumb" onClick={open('/')} {...dropProps('')}>
+            All
+          </a>
+          {path.map(f => (
+            <span key={f.id} className="crumb-sep-wrap">
+              <span className="crumb-sep">/</span>
+              <a href={folderPath(f.id)} className="crumb" onClick={open(folderPath(f.id))} {...dropProps(f.id)}>
+                {f.name}
+              </a>
+            </span>
+          ))}
+        </nav>
         <div className="list-tools">
-          {!empty && (
-            <input
-              className="search"
-              type="search"
-              placeholder="Search…"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-            />
-          )}
-          {canWrite && (
+          <input
+            className="search"
+            type="search"
+            placeholder="Search everywhere…"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+          {canWrite && !missing && (
             <>
               <button type="button" className="primary" onClick={() => setCreating('page')}>
                 New page
@@ -96,48 +155,60 @@ export function BoardList({ canWrite, whoami }: { canWrite: boolean; whoami: Rea
               <button type="button" onClick={() => setCreating('edgeless')}>
                 New board
               </button>
+              <button type="button" onClick={() => setNewFolder(true)}>
+                New folder
+              </button>
             </>
           )}
           {whoami}
         </div>
       </header>
+
       <div className="list-filters">
-        {!empty && (
-          <div className="segmented" role="tablist" aria-label="Kind">
-            {KINDS.map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                role="tab"
-                aria-selected={kind === k}
-                className={`segment${kind === k ? ' segment-active' : ''}`}
-                onClick={() => pickKind(k)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
-        <TagChips tags={tags} selected={selection} onSelect={select} />
+        <div className="segmented" role="tablist" aria-label="Kind">
+          {KINDS.map(([k, label]) => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={kind === k}
+              className={`segment${kind === k ? ' segment-active' : ''}`}
+              onClick={() => {
+                setKind(k);
+                saveKind(k);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {canWrite && <span className="muted hint">Drag pages, boards and folders onto a folder to move them.</span>}
       </div>
 
-      {creating && (
-        <CreateBoard
-          mode={creating}
-          known={tags}
-          preset={selection ?? []}
-          onCancel={() => setCreating(null)}
+      {creating && <CreateDoc mode={creating} folder={folder} onCancel={() => setCreating(null)} />}
+      {newFolder && (
+        <NameForm
+          placeholder="Folder name"
+          submit="Create folder"
+          onCancel={() => setNewFolder(false)}
+          onSubmit={name =>
+            act(async () => {
+              await api.createFolder(name, folder);
+              setNewFolder(false);
+            })
+          }
         />
       )}
-      {error && <p className="error">Could not load boards: {error}</p>}
-      {boards === null && !error && <p className="muted">Loading…</p>}
-      {empty && !creating && (
+      {error && <p className="error">{error}</p>}
+      {docs === null && !error && <p className="muted">Loading…</p>}
+      {missing && <p className="muted">This folder is not there any more.</p>}
+      {empty && !missing && !creating && (
         <div className="empty">
-          <p>Nothing here yet.</p>
+          <p>{folder ? 'This folder is empty.' : 'Nothing here yet.'}</p>
           {canWrite && (
             <>
               <button type="button" className="primary" onClick={() => setCreating('page')}>
-                Create the first page
+                Create a page
               </button>{' '}
               <button type="button" onClick={() => setCreating('edgeless')}>
                 or a board
@@ -146,66 +217,234 @@ export function BoardList({ canWrite, whoami }: { canWrite: boolean; whoami: Rea
           )}
         </div>
       )}
-      {boards && !empty && shown.length === 0 && <p className="muted">Nothing matches the filter.</p>}
+      {searching && shownDocs.length === 0 && <p className="muted">Nothing matches.</p>}
 
       <ul className="board-grid">
-        {shown.map(b => (
+        {shownFolders.map(f =>
+          renaming === f.id ? (
+            <li key={f.id}>
+              <NameForm
+                initial={f.name}
+                placeholder="Folder name"
+                submit="Rename"
+                onCancel={() => setRenaming(null)}
+                onSubmit={name =>
+                  act(async () => {
+                    await api.updateFolder(f.id, { name });
+                    setRenaming(null);
+                  })
+                }
+              />
+            </li>
+          ) : (
+            <li key={f.id}>
+              <a
+                className="board-card folder-card"
+                href={folderPath(f.id)}
+                onClick={open(folderPath(f.id))}
+                {...dragProps({ kind: 'folder', id: f.id })}
+                {...dropProps(f.id)}
+              >
+                <span className="board-title">
+                  <span className="kind kind-folder" aria-label="Folder">
+                    <FolderIcon />
+                  </span>
+                  {f.name}
+                </span>
+                <span className="board-meta">{plural(countIn(folders, docs ?? [], f.id), 'item')}</span>
+                {canWrite && (
+                  <ItemMenu
+                    items={[
+                      ['Rename', () => setRenaming(f.id)],
+                      ['Move to…', () => setMoving({ kind: 'folder', id: f.id })],
+                      ['Delete', () => act(() => api.deleteFolder(f.id))],
+                    ]}
+                  />
+                )}
+              </a>
+            </li>
+          ),
+        )}
+        {shownDocs.map(b => (
           <li key={b.id}>
-            <a
-              className="board-card"
-              href={`/b/${b.id}`}
-              onClick={e => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                e.preventDefault();
-                navigate(`/b/${b.id}`);
-              }}
-            >
+            <a className="board-card" href={`/b/${b.id}`} onClick={open(`/b/${b.id}`)} {...dragProps({ kind: 'doc', id: b.id })}>
               <span className="board-title">
                 <span className={`kind kind-${b.mode}`} aria-label={b.mode === 'page' ? 'Page' : 'Board'}>
                   {b.mode === 'page' ? <PageIcon /> : <BoardIcon />}
                 </span>
                 {b.title || untitled(b.mode)}
               </span>
-              <span className="board-meta">Updated {when(b.updated)}</span>
-              {b.tags.length > 0 && (
-                <span className="chips chips-small">
-                  {b.tags.map(t => (
-                    <span key={t} className="chip">
-                      {t}
-                    </span>
-                  ))}
-                </span>
-              )}
+              <span className="board-meta">
+                {searching && pathOf(folders, b.folder).length > 0 && (
+                  <>{pathOf(folders, b.folder).map(f => f.name).join(' / ')} · </>
+                )}
+                Updated {when(b.updated)}
+              </span>
+              {canWrite && <ItemMenu items={[['Move to…', () => setMoving({ kind: 'doc', id: b.id })]]} />}
             </a>
           </li>
         ))}
       </ul>
+
+      {moving && (
+        <MoveDialog
+          folders={folders}
+          item={moving}
+          accepts={target => accepts(moving, target)}
+          onCancel={() => setMoving(null)}
+          onMove={target => {
+            const item = moving;
+            setMoving(null);
+            void moveInto(item, target);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function CreateBoard({
-  mode,
-  known,
-  preset,
+/** ItemMenu is a card's "⋯" menu; clicks inside it never open the card. */
+function ItemMenu({ items }: { items: Array<[string, () => void]> }) {
+  const [open, setOpen] = useState(false);
+  const stop = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  return (
+    <span className="item-menu" onClick={stop}>
+      <button
+        type="button"
+        className="item-menu-button"
+        aria-label="More"
+        aria-expanded={open}
+        onClick={e => {
+          stop(e);
+          setOpen(o => !o);
+        }}
+      >
+        ⋯
+      </button>
+      {open && (
+        <span className="item-menu-list" role="menu" onMouseLeave={() => setOpen(false)}>
+          {items.map(([label, run]) => (
+            <button
+              key={label}
+              type="button"
+              role="menuitem"
+              onClick={e => {
+                stop(e);
+                setOpen(false);
+                run();
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** MoveDialog picks a folder to move a document or a folder into. */
+function MoveDialog({
+  folders,
+  item,
+  accepts,
+  onMove,
   onCancel,
 }: {
-  mode: Mode;
-  known: string[];
-  preset: string[];
+  folders: Folder[];
+  item: Dragged;
+  accepts: (target: string) => boolean;
+  onMove: (target: string) => void;
   onCancel: () => void;
 }) {
+  // The tree, depth-first, each folder under its parent.
+  const rows: Array<{ id: string; name: string; depth: number }> = [{ id: '', name: 'All (top level)', depth: 0 }];
+  const walk = (parent: string, depth: number) => {
+    for (const f of inFolder(folders, [], parent).folders) {
+      if (item.kind === 'folder' && f.id === item.id) continue; // not into itself or below
+      rows.push({ id: f.id, name: f.name, depth });
+      walk(f.id, depth + 1);
+    }
+  };
+  walk('', 1);
+  return (
+    <div className="dialog-scrim" onClick={onCancel}>
+      <div className="dialog" role="dialog" aria-label="Move to" onClick={e => e.stopPropagation()}>
+        <h2>Move to</h2>
+        <ul className="move-list">
+          {rows.map(r => (
+            <li key={r.id || 'top'}>
+              <button
+                type="button"
+                disabled={!accepts(r.id)}
+                style={{ paddingLeft: `${8 + r.depth * 16}px` }}
+                onClick={() => onMove(r.id)}
+              >
+                {r.id ? <FolderIcon /> : null} {r.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NameForm({
+  initial = '',
+  placeholder,
+  submit,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string;
+  placeholder: string;
+  submit: string;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initial);
+  return (
+    <form
+      className="create"
+      onSubmit={(e: FormEvent) => {
+        e.preventDefault();
+        if (name.trim()) onSubmit(name.trim());
+      }}
+    >
+      <input
+        autoFocus
+        placeholder={placeholder}
+        value={name}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => e.key === 'Escape' && onCancel()}
+      />
+      <button type="submit" className="primary" disabled={!name.trim()}>
+        {submit}
+      </button>
+      <button type="button" onClick={onCancel}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
+function CreateDoc({ mode, folder, onCancel }: { mode: Mode; folder: string; onCancel: () => void }) {
   const [title, setTitle] = useState('');
-  // A new board made while a filter is on carries those tags, so it shows up
-  // in the list the person is looking at.
-  const [tags, setTags] = useState(preset.join(', '));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true);
     try {
-      const b = await api.createBoard({ mode, title, tags: parseTags(tags) });
+      // New documents go into the folder on screen.
+      const b = await api.createBoard({ mode, title, folder });
       navigate(`/b/${b.id}`);
     } catch (err) {
       setError(String((err as Error).message ?? err));
@@ -221,17 +460,6 @@ function CreateBoard({
         onChange={e => setTitle(e.target.value)}
         onKeyDown={e => e.key === 'Escape' && onCancel()}
       />
-      <input
-        list="aeboard-create-tags"
-        placeholder="Tags, comma-separated"
-        value={tags}
-        onChange={e => setTags(e.target.value)}
-      />
-      <datalist id="aeboard-create-tags">
-        {known.map(t => (
-          <option key={t} value={t} />
-        ))}
-      </datalist>
       <button type="submit" className="primary" disabled={busy}>
         Create
       </button>
@@ -243,7 +471,7 @@ function CreateBoard({
   );
 }
 
-type Mode = 'edgeless' | 'page';
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const KINDS: Array<[KindFilter, string]> = [
   ['all', 'All'],
@@ -284,6 +512,14 @@ function PageIcon() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
       <path d="M6 3h9l3 3v15H6z" />
       <path d="M9 10h6M9 14h6M9 18h4" />
+    </svg>
+  );
+}
+
+export function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z" />
     </svg>
   );
 }
