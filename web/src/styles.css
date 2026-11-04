@@ -216,7 +216,7 @@ a.button.primary:hover { filter: brightness(0.95); }
 .sidebar-toggle { position: fixed; z-index: 45; top: 10px; left: 10px; border: none; background: none; padding: 5px 6px; color: var(--muted); display: inline-flex; border-radius: 6px; }
 /* Room for the button: before the logo in the sidebar, before the header's
    first item on the page. */
-.sidebar .sb-head { padding-left: 46px; }
+.sidebar .sb-head { justify-content: center; padding-left: 46px; padding-right: 46px; }
 .lead-space { flex: none; width: 26px; }
 .sidebar-toggle:hover, .sidebar-toggle[aria-pressed='true'] { background: var(--bg-soft); color: var(--fg); }
 @media (max-width: 640px) {
