@@ -22,7 +22,10 @@ export function dragData(e: React.DragEvent): Dragged | null {
 }
 
 export interface Catalog {
+  /** The documents, those in the trash left out. */
   docs: Board[] | null;
+  /** The documents in the trash, most recently trashed first. */
+  trash: Board[];
   folders: Folder[];
   error: string | null;
   canWrite: boolean;
@@ -45,6 +48,11 @@ export interface Catalog {
   createFolder(name: string, parent: string): Promise<Folder>;
   renameFolder(id: string, name: string): Promise<void>;
   deleteFolder(id: string): Promise<void>;
+  /** trashDoc moves a document to the trash, restoreDoc brings it back. */
+  trashDoc(id: string): Promise<void>;
+  restoreDoc(id: string): Promise<void>;
+  /** deleteDoc deletes a trashed document for good. */
+  deleteDoc(id: string): Promise<void>;
 }
 
 const Ctx = createContext<Catalog | null>(null);
@@ -71,7 +79,8 @@ export function CatalogProvider({
   version?: number;
   children: ReactNode;
 }) {
-  const [docs, setDocs] = useState<Board[] | null>(null);
+  // Every document, the trashed ones included; split below.
+  const [all, setDocs] = useState<Board[] | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
   const seq = useRef(0);
@@ -103,6 +112,12 @@ export function CatalogProvider({
     if (version !== undefined) reload();
   }, [version, reload]);
 
+  const docs = useMemo(() => all?.filter(d => !d.trashed) ?? null, [all]);
+  const trash = useMemo(
+    () => (all ?? []).filter(d => d.trashed).sort((a, b) => (b.trashed ?? '').localeCompare(a.trashed ?? '')),
+    [all],
+  );
+
   const value = useMemo<Catalog>(() => {
     const act = async <T,>(f: () => Promise<T>): Promise<T> => {
       try {
@@ -115,8 +130,16 @@ export function CatalogProvider({
         reload();
       }
     };
+    const setTrashed = (id: string, on: boolean) =>
+      act(async () => {
+        // Show it at once; the reload confirms it.
+        const at = on ? new Date().toISOString() : undefined;
+        setDocs(ds => ds?.map(d => (d.id === id ? { ...d, trashed: at } : d)) ?? ds);
+        await api.updateBoard(id, { trashed: on });
+      });
     return {
       docs,
+      trash,
       folders,
       error,
       canWrite,
@@ -186,8 +209,15 @@ export function CatalogProvider({
       createFolder: (name, parent) => act(() => api.createFolder(name, parent)),
       renameFolder: (id, name) => act(async () => void (await api.updateFolder(id, { name }))),
       deleteFolder: id => act(() => api.deleteFolder(id)),
+      trashDoc: id => setTrashed(id, true),
+      restoreDoc: id => setTrashed(id, false),
+      deleteDoc: id =>
+        act(async () => {
+          setDocs(ds => ds?.filter(d => d.id !== id) ?? ds);
+          await api.deleteBoard(id);
+        }),
     };
-  }, [docs, folders, error, canWrite, reload]);
+  }, [docs, trash, folders, error, canWrite, reload]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

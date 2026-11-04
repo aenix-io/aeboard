@@ -5,7 +5,8 @@ import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../cat
 import { childrenOf, type Entry, entriesOf, pathOf, topLevel } from '../library';
 import { navigate, type Route } from '../router';
 import { untitled } from './BoardPage';
-import { BoardIcon, FolderIcon, McpIcon, PageIcon } from './icons';
+import { BoardIcon, FolderIcon, McpIcon, PageIcon, TrashIcon } from './icons';
+import { Confirm } from './Confirm';
 import { McpDialog } from './McpDialog';
 
 const OPEN_KEY = 'aenotes.sidebar.expanded';
@@ -46,6 +47,8 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   // The folder an inline "new folder" field is open in, or null.
   const [newFolderIn, setNewFolderIn] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // The document a "move to trash" confirmation is open for.
+  const [trashing, setTrashing] = useState<Board | null>(null);
 
   const docs = useMemo(() => cat.docs ?? [], [cat.docs]);
   // What the levels list: documents nested in another one show only there.
@@ -360,6 +363,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
                   ['New board inside', () => void createChild('edgeless', d.id, at.node)],
                 ]}
               />
+              <RowMenu label="Document actions" glyph="⋯" items={[['Move to trash', () => setTrashing(d)]]} />
             </span>
           )}
         </div>
@@ -402,12 +406,34 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       </div>
       {cat.error && <div className="sb-error error">{cat.error}</div>}
       <div className="sb-foot">
+        <a
+          className={`sb-foot-button${route.name === 'trash' ? ' sb-active' : ''}`}
+          href="/trash"
+          onClick={go('/trash')}
+        >
+          <TrashIcon />
+          Trash
+        </a>
         <button type="button" className="sb-foot-button" onClick={() => setMcpOpen(true)}>
           <McpIcon />
           MCP
         </button>
       </div>
       {mcpOpen && <McpDialog hosted={hosted} onClose={closeMcp} />}
+      {trashing && (
+        <Confirm
+          title="Move to trash?"
+          body={`${trashing.title || untitled(trashing.mode)} will be moved to the trash. You can restore it from there.`}
+          action="Move to trash"
+          danger
+          onCancel={() => setTrashing(null)}
+          onConfirm={() => {
+            const id = trashing.id;
+            setTrashing(null);
+            void cat.trashDoc(id).catch(() => {});
+          }}
+        />
+      )}
     </aside>
   );
 }

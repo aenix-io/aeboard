@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 
-// The routes, over the History API: "/" (every document) and "/b/<id>" (a
-// document). Folders have no page of their own: in the sidebar they only
+// The routes, over the History API: "/" (every document), "/trash" and
+// "/b/<id>" (a document). Folders have no page of their own: in the sidebar they only
 // expand and collapse (AFFiNE's way), so an old /f/<id> link shows "/".
-export type Route = { name: 'list' } | { name: 'board'; id: string };
+export type Route = { name: 'list' } | { name: 'trash' } | { name: 'board'; id: string };
 
 export function parseRoute(path: string): Route {
   const b = /^\/b\/([0-9a-z]+)\/?$/.exec(path);
-  return b ? { name: 'board', id: b[1] } : { name: 'list' };
+  if (b) return { name: 'board', id: b[1] };
+  return /^\/trash\/?$/.test(path) ? { name: 'trash' } : { name: 'list' };
 }
 
 export function navigate(path: string): void {

@@ -6,6 +6,7 @@ import { BoardList } from './components/BoardList';
 import { BoardPage } from './components/BoardPage';
 import { NoAccess, SignIn } from './components/SignIn';
 import { Sidebar, SidebarToggle, useSidebar } from './components/Sidebar';
+import { TrashList } from './components/TrashList';
 import { SyncBadge } from './components/SyncBadge';
 import { WhoAmI } from './components/WhoAmI';
 import { CatalogProvider } from './catalog';
@@ -90,6 +91,8 @@ function Boards({
               lead={lead}
               whoami={whoami}
             />
+          ) : route.name === 'trash' ? (
+            <TrashList lead={lead} whoami={whoami} />
           ) : (
             <BoardList lead={lead} whoami={whoami} />
           )}

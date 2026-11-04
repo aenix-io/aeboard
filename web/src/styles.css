@@ -240,3 +240,15 @@ a.button.primary:hover { filter: brightness(0.95); }
 .mcp-actions { display: flex; justify-content: flex-end; }
 .sb-folder-label { border: none; background: none; text-align: left; cursor: pointer; border-radius: 0; font-size: inherit; }
 .kind-linked { opacity: 0.75; }
+
+/* confirmation dialogs and the trash */
+.confirm-body { margin: 0; color: var(--muted); line-height: 1.45; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+button.danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+.trash-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.trash-row { display: flex; align-items: center; gap: 12px; padding: 8px 4px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
+.trash-title { display: flex; align-items: center; gap: 6px; color: var(--fg); text-decoration: none; font-weight: 500; min-width: 0; }
+.trash-actions { margin-left: auto; display: flex; gap: 6px; }
+.trash-banner { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #fff1f0; color: var(--danger); border-bottom: 1px solid #ffd8d3; font-size: 13px; flex-wrap: wrap; }
+.trash-banner .spacer { flex: 1; }
+a.sb-foot-button { text-decoration: none; }

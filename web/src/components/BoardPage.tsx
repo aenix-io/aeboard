@@ -5,6 +5,7 @@ import { useCatalog } from '../catalog';
 
 import { api, type Board } from '../api';
 import { navigate } from '../router';
+import { Confirm } from './Confirm';
 
 interface Props {
   id: string;
@@ -34,6 +35,9 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const mount = useRef<HTMLDivElement>(null);
+  const [deleting, setDeleting] = useState(false);
+  // In the trash: AFFiNE keeps such a document readable, with a way back.
+  const trashed = cat.trash.some(d => d.id === id);
 
   useEffect(() => {
     api
@@ -172,6 +176,38 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
         )}
         {whoami}
       </header>
+      {trashed && (
+        <div className="trash-banner" role="status">
+          This document is in the trash.
+          <span className="spacer" />
+          {canWrite && (
+            <>
+              <button type="button" onClick={() => void cat.restoreDoc(id).catch(() => {})}>
+                Restore
+              </button>
+              <button type="button" className="danger" onClick={() => setDeleting(true)}>
+                Delete permanently
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {deleting && (
+        <Confirm
+          title="Delete permanently?"
+          body={`${title || untitled(board?.mode ?? 'page')} will be deleted for good. This cannot be undone.`}
+          action="Delete permanently"
+          danger
+          onCancel={() => setDeleting(false)}
+          onConfirm={() => {
+            setDeleting(false);
+            void cat
+              .deleteDoc(id)
+              .then(() => navigate('/trash'))
+              .catch(() => {});
+          }}
+        />
+      )}
       <div className="editor-mount" ref={mount} />
     </div>
   );

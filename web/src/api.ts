@@ -7,6 +7,8 @@ export interface Board {
   /** The folder the document is in; "" is the top level. */
   folder: string;
   rank?: string;
+  /** When the document was moved to the trash; absent when it is not. */
+  trashed?: string;
   /** The documents this one links to: its children in the sidebar. */
   links?: string[];
   created: string;
@@ -97,8 +99,10 @@ export const api = {
   getBoard: (id: string) => call<Board>('GET', `/boards/${id}`),
   createBoard: (doc: { id?: string; mode?: 'edgeless' | 'page'; title?: string; folder?: string; blank?: boolean }) =>
     call<Board>('POST', '/boards', doc),
-  updateBoard: (id: string, patch: { title?: string; folder?: string; rank?: string }) =>
+  updateBoard: (id: string, patch: { title?: string; folder?: string; rank?: string; trashed?: boolean }) =>
     call<Board>('PATCH', `/boards/${id}`, patch),
+  /** deleteBoard deletes a trashed document for good. */
+  deleteBoard: (id: string) => call<void>('DELETE', `/boards/${id}`),
   /** addChild puts doc inside parent: a link to it at the end of parent. */
   addChild: (parent: string, doc: string) => call<void>('POST', `/boards/${parent}/children`, { doc }),
   createFolder: (name: string, parent: string) => call<Folder>('POST', '/folders', { name, parent }),
