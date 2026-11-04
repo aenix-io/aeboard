@@ -9,7 +9,7 @@ import { BoardIcon, PageIcon } from './icons';
 
 /** TrashList is the trash, as AFFiNE's: documents moved there, each to
  *  restore or delete for good. */
-export function TrashList({ lead, whoami }: { lead?: ReactNode; whoami: ReactNode }) {
+export function TrashList({ lead, whoami, status }: { lead?: ReactNode; whoami: ReactNode; status?: ReactNode }) {
   const cat = useCatalog();
   const [deleting, setDeleting] = useState<Board | null>(null);
   return (
@@ -17,7 +17,10 @@ export function TrashList({ lead, whoami }: { lead?: ReactNode; whoami: ReactNod
       <header className="list-head">
         {lead}
         <h1 className="list-title">Trash</h1>
-        <div className="list-tools">{whoami}</div>
+        <div className="list-tools">
+          {status}
+          {whoami}
+        </div>
       </header>
       {cat.error && <p className="error">{cat.error}</p>}
       {cat.docs !== null && cat.trash.length === 0 && <p className="muted">Deleted documents will appear here.</p>}

@@ -20,12 +20,14 @@ interface Props {
   /** The sidebar toggle, first in the header. */
   lead?: ReactNode;
   whoami: ReactNode;
+  /** The sync badge, left of the other tools. */
+  status?: ReactNode;
 }
 
 /** BoardList is the start page: every page and board, most recently
  *  updated first, as AFFiNE's "All docs" — the structure (folders and
  *  documents inside documents) lives in the sidebar. */
-export function BoardList({ lead, whoami }: Props) {
+export function BoardList({ lead, whoami, status }: Props) {
   const cat = useCatalog();
   const { docs, folders, canWrite } = cat;
   const [error, setError] = useState<string | null>(null);
@@ -98,6 +100,7 @@ export function BoardList({ lead, whoami }: Props) {
         {lead}
         <h1 className="list-title">All documents</h1>
         <div className="list-tools">
+          {status}
           <input
             className="search"
             type="search"

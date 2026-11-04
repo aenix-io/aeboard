@@ -20,6 +20,8 @@ interface Props {
   /** The sidebar toggle, first in the header. */
   lead?: ReactNode;
   whoami: ReactNode;
+  /** The sync badge, left of the Board/Page switch. */
+  status?: ReactNode;
 }
 
 type View = 'edgeless' | 'page';
@@ -130,7 +132,7 @@ function DocActions({
 
 /** BoardPage is one document — a board or a page: a slim header (the
  *  title and the Board/Page switch, as AFFiNE's) over the editor. */
-export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
+export function BoardPage({ id, userName, canWrite, lead, whoami, status }: Props) {
   const cat = useCatalog();
   const [board, setBoard] = useState<Board | null>(null);
   const [view, setView] = useState<View | undefined>(viewFromURL);
@@ -269,6 +271,7 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
         {board && <ToOriginal id={id} />}
         {error && board && <span className="error">{error}</span>}
         <span className="spacer" />
+        {status}
         {board && (
           <div className="segmented" role="tablist" aria-label="View">
             {(['edgeless', 'page'] as const).map(v => (

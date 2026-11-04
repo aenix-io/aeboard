@@ -83,9 +83,11 @@ function Boards({
   const lead = sidebar ? null : <span className="lead-space" aria-hidden="true" />;
   const userName = me?.login ?? name;
   const canWrite = !me || me.access === 'write';
+  // The sync badge comes and goes, so it stands left of the header's other
+  // right-hand items: they stay put when it shows.
+  const status = <SyncBadge status={sync} />;
   const whoami = (
     <>
-      <SyncBadge status={sync} />
       <WhoAmI
         identity={me}
         hosted={!!me?.hosted}
@@ -112,11 +114,12 @@ function Boards({
               canWrite={canWrite}
               lead={lead}
               whoami={whoami}
+              status={status}
             />
           ) : route.name === 'trash' ? (
-            <TrashList whoami={whoami} />
+            <TrashList whoami={whoami} status={status} />
           ) : (
-            <BoardList whoami={whoami} />
+            <BoardList whoami={whoami} status={status} />
           )}
         </main>
       </div>
