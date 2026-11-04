@@ -48,6 +48,9 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   // The folder an inline "new folder" field is open in, or null.
   const [newFolderIn, setNewFolderIn] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // The row last clicked to open a document: a document linked from two
+  // places has two rows, and only the one used is marked as open.
+  const [opened, setOpened] = useState<{ doc: string; node: string } | null>(null);
   // The document a "move to trash" confirmation is open for.
   const [trashing, setTrashing] = useState<Board | null>(null);
 
@@ -339,6 +342,18 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     );
   };
 
+  // The open document's row: the one clicked, or (opened another way: a
+  // link, the list) its first row in the tree. Rows render in tree order,
+  // so the first one to ask takes it.
+  let firstTaken = false;
+  const isOpenRow = (doc: string, node: string) => {
+    if (doc !== currentDoc) return false;
+    if (opened?.doc === doc) return opened.node === node;
+    if (firstTaken) return false;
+    firstTaken = true;
+    return true;
+  };
+
   // docRow is a document and, expanded, the documents it links to. A
   // document shows wherever it is linked from, so a row is keyed by its
   // path (node), not by the document.
@@ -353,7 +368,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     return (
       <div key={at.node} className="sb-node">
         <div
-          className={`sb-row${d.id === currentDoc ? ' sb-active' : ''}`}
+          className={`sb-row${isOpenRow(d.id, at.node) ? ' sb-active' : ''}`}
           style={{ paddingLeft: indent(at.depth) }}
           {...drag({ kind: 'doc', id: d.id, from: linked ? at.container.id : undefined })}
           {...rowDrop(row)}
@@ -372,7 +387,14 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           ) : (
             <span className="sb-caret sb-caret-none" />
           )}
-          <a className="sb-label" href={`/b/${d.id}`} onClick={go(`/b/${d.id}`)}>
+          <a
+            className="sb-label"
+            href={`/b/${d.id}`}
+            onClick={e => {
+              setOpened({ doc: d.id, node: at.node });
+              go(`/b/${d.id}`)(e);
+            }}
+          >
             <span className={`kind kind-${d.mode}${linked ? ' kind-linked' : ''}`}>
               {d.mode === 'page' ? <PageIcon /> : <BoardIcon />}
             </span>
