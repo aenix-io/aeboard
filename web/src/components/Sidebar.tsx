@@ -540,12 +540,8 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
 
   return (
     <aside className="sidebar" aria-label="Pages and boards">
-      <div className="sb-head">
-        <a className="sb-home" href="/" onClick={go('/')}>
-          <img className="sb-logo" src="/icon-192.png" alt="" width={22} height={22} />
-          aenotes
-        </a>
-      </div>
+      {/* The head row holds the sidebar's button (fixed in the corner). */}
+      <div className="sb-head" />
       <nav className="sb-nav">
         <button type="button" className="sb-nav-item" onClick={openSearch}>
           <SearchIcon />
