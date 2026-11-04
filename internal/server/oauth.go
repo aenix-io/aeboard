@@ -239,6 +239,12 @@ func (a *authManager) handleRegister(w http.ResponseWriter, r *http.Request) {
 // PKCE are checked, the request is kept, and the browser goes to the forge's
 // sign-in; the forge's callback resumes it in handleMCPCallback.
 func (a *authManager) handleAuthorize(w http.ResponseWriter, r *http.Request) {
+	// No form-action in the consent page's CSP: Approve redirects to the
+	// client's own redirect URI, which form-action would block.
+	if !a.authorizeLimiter.allow(clientIP(r)) {
+		writeOAuthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many authorizations; try again shortly")
+		return
+	}
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
 	redirectURI := q.Get("redirect_uri")
@@ -597,12 +603,13 @@ func (a *authManager) issueTokens(w http.ResponseWriter, sid string, refresh tok
 		s.created = now
 	}
 	s.mcpRefresh = randToken()
+	s.mcpAccess = randToken()
 	s.accessExpiry = now.Add(mcpAccessTTL)
 	a.sessions[sid] = s
 	a.saveLocked()
 	a.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"access_token":  sid,
+		"access_token":  s.mcpAccess,
 		"token_type":    "Bearer",
 		"expires_in":    int(mcpAccessTTL / time.Second),
 		"refresh_token": s.mcpRefresh,
@@ -741,7 +748,7 @@ func renderConsentPage(w http.ResponseWriter, consentID, login, clientID, redire
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	// The page is never framed: approving must be the person's own click.
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(page))
 }

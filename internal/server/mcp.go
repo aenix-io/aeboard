@@ -103,7 +103,16 @@ func (a *authManager) resourceMetadataURL() string {
 // which renews an expiring forge token in place. An MCP client's token
 // also lapses at its accessExpiry, until the client refreshes it.
 func (a *authManager) verifyToken(ctx context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
-	s, ok := a.sessionByID(ctx, token)
+	// An agent's access token; or, as in aeman, a browser session's id.
+	sid, s, ok := a.sessionByAccess(ctx, token)
+	if !ok {
+		sid = token
+		s, ok = a.sessionByID(ctx, token)
+		if ok && s.client != "" {
+			// An agent's session id is not its access token.
+			ok = false
+		}
+	}
 	if !ok {
 		return nil, fmt.Errorf("unknown or expired session: %w", auth.ErrInvalidToken)
 	}
@@ -117,7 +126,7 @@ func (a *authManager) verifyToken(ctx context.Context, token string, _ *http.Req
 	return &auth.TokenInfo{
 		UserID:     s.login,
 		Expiration: exp,
-		Extra:      map[string]any{forgeTokenExtraKey: s.token, sessionIDExtraKey: token},
+		Extra:      map[string]any{forgeTokenExtraKey: s.token, sessionIDExtraKey: sid},
 	}, nil
 }
 

@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -80,6 +81,9 @@ type oauthSession struct {
 	// mcpRefresh is the client's current refresh token: single-use, a new
 	// one with every refresh.
 	mcpRefresh string
+	// mcpAccess is the client's current access token, a fresh one on every
+	// refresh, so a leaked one dies with the next refresh.
+	mcpAccess string
 	// accessExpiry is when the access token stops being accepted until the
 	// client refreshes it. Zero until the authorization code is redeemed.
 	accessExpiry time.Time
@@ -110,6 +114,7 @@ type persistedSession struct {
 	// The MCP side of the session (see oauthSession).
 	Client       string    `json:"client,omitempty"`
 	MCPRefresh   string    `json:"mcpRefresh,omitempty"`
+	MCPAccess    string    `json:"mcpAccess,omitempty"`
 	AccessExpiry time.Time `json:"accessExpiry,omitempty"`
 }
 
@@ -146,6 +151,9 @@ type authManager struct {
 	pendingConsent map[string]pendingConsent // by consent id, consentTTL
 	// registerLimiter rate-limits the public client registration.
 	registerLimiter *rateLimiter
+	// authorizeLimiter rate-limits authorizations, so a flood cannot fill
+	// the pending ones for everybody.
+	authorizeLimiter *rateLimiter
 }
 
 func newAuthManager(cfg OAuthConfig, f forge.Forge, log *slog.Logger) *authManager {
@@ -170,7 +178,8 @@ func newAuthManager(cfg OAuthConfig, f forge.Forge, log *slog.Logger) *authManag
 		authCodes:      map[string]authCode{},
 		pendingConsent: map[string]pendingConsent{},
 		// Legitimate MCP clients register once: this only ever bites a flood.
-		registerLimiter: newRateLimiter(30, time.Minute),
+		registerLimiter:  newRateLimiter(30, time.Minute),
+		authorizeLimiter: newRateLimiter(60, time.Minute),
 	}
 	a.load()
 	return a
@@ -212,7 +221,7 @@ func (a *authManager) load() {
 			a.sessions[sid] = oauthSession{
 				token: s.Token, login: s.Login, name: s.Name, avatarURL: s.AvatarURL, created: s.Created,
 				refresh: s.Refresh, tokenExpiry: s.TokenExpiry,
-				client: s.Client, mcpRefresh: s.MCPRefresh, accessExpiry: s.AccessExpiry,
+				client: s.Client, mcpRefresh: s.MCPRefresh, mcpAccess: s.MCPAccess, accessExpiry: s.AccessExpiry,
 			}
 		}
 	}
@@ -239,7 +248,7 @@ func (a *authManager) saveLocked() {
 			sessions[sid] = persistedSession{
 				Token: s.token, Login: s.login, Name: s.name, AvatarURL: s.avatarURL, Created: s.created,
 				Refresh: s.refresh, TokenExpiry: s.tokenExpiry,
-				Client: s.client, MCPRefresh: s.mcpRefresh, AccessExpiry: s.accessExpiry,
+				Client: s.client, MCPRefresh: s.mcpRefresh, MCPAccess: s.mcpAccess, AccessExpiry: s.accessExpiry,
 			}
 		}
 		enc, err := encryptSessions(a.sessionKey, sessions)
@@ -318,7 +327,33 @@ func (a *authManager) session(r *http.Request) (oauthSession, bool) {
 	if sid == "" {
 		return oauthSession{}, false
 	}
-	return a.sessionByID(r.Context(), sid)
+	s, ok := a.sessionByID(r.Context(), sid)
+	// An agent's session (MCP) is not a browser's: its id is never a cookie.
+	if !ok || s.client != "" {
+		return oauthSession{}, false
+	}
+	return s, true
+}
+
+// sessionByAccess resolves an MCP access token to its session and id.
+func (a *authManager) sessionByAccess(ctx context.Context, token string) (string, oauthSession, bool) {
+	if token == "" {
+		return "", oauthSession{}, false
+	}
+	a.mu.Lock()
+	sid := ""
+	for id, s := range a.sessions {
+		if s.mcpAccess != "" && subtle.ConstantTimeCompare([]byte(s.mcpAccess), []byte(token)) == 1 {
+			sid = id
+			break
+		}
+	}
+	a.mu.Unlock()
+	if sid == "" {
+		return "", oauthSession{}, false
+	}
+	s, ok := a.sessionByID(ctx, sid)
+	return sid, s, ok
 }
 
 func (a *authManager) sessionByID(ctx context.Context, sid string) (oauthSession, bool) {

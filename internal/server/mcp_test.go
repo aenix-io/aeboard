@@ -200,18 +200,30 @@ func TestAnExpiredAccessTokenWorksAgainAfterARefresh(t *testing.T) {
 	h.gh.set("alice", "write")
 	tk, clientID := h.mintToken(t, "alice")
 	a := h.srv.auth
+	sid, _, _ := sessionOfAccess(a, tk.AccessToken)
 	a.mu.Lock()
-	s := a.sessions[tk.AccessToken]
+	s := a.sessions[sid]
 	s.accessExpiry = time.Now().Add(-time.Second)
-	a.sessions[tk.AccessToken] = s
+	a.sessions[sid] = s
 	a.mu.Unlock()
 	if r := rawInitialize(t, h.ts.URL+"/mcp", tk.AccessToken); r.status != http.StatusUnauthorized {
 		t.Fatalf("expired: %d", r.status)
 	}
-	tokensOf(t, h.postForm(t, "/oauth/token", map[string][]string{
+	fresh := tokensOf(t, h.postForm(t, "/oauth/token", map[string][]string{
 		"grant_type": {"refresh_token"}, "refresh_token": {tk.RefreshToken}, "client_id": {clientID},
 	}))
-	cs, err := dialMCP(t, h.ts.URL+"/mcp", tk.AccessToken)
+	// A refresh mints a new access token; the old one is dead.
+	if fresh.AccessToken == tk.AccessToken {
+		t.Fatal("the refresh kept the access token")
+	}
+	if r := rawInitialize(t, h.ts.URL+"/mcp", tk.AccessToken); r.status != http.StatusUnauthorized {
+		t.Fatalf("old token after refresh: %d", r.status)
+	}
+	// An agent's session is not a browser's cookie.
+	if _, ok := a.session(cookieRequest(sid)); ok {
+		t.Fatal("an MCP session worked as a cookie")
+	}
+	cs, err := dialMCP(t, h.ts.URL+"/mcp", fresh.AccessToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,4 +335,10 @@ func TestLocalMCPWithoutAnIdentityIsAnonymous(t *testing.T) {
 func mustGet(u string) *http.Request {
 	req, _ := http.NewRequest(http.MethodGet, u, nil)
 	return req
+}
+
+func cookieRequest(sid string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: sid})
+	return r
 }

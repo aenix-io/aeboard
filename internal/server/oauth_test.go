@@ -378,9 +378,7 @@ func TestTokenExchangeAndRefresh(t *testing.T) {
 		t.Fatalf("token: %+v", tk)
 	}
 	a := h.srv.auth
-	a.mu.Lock()
-	s, ok := a.sessions[tk.AccessToken]
-	a.mu.Unlock()
+	_, s, ok := sessionOfAccess(a, tk.AccessToken)
 	if !ok || s.login != "alice" || s.client != clientID || s.mcpRefresh != tk.RefreshToken {
 		t.Fatalf("the access token is not alice's session: %+v", s)
 	}
@@ -391,7 +389,8 @@ func TestTokenExchangeAndRefresh(t *testing.T) {
 	oauthError(t, refresh(tk.RefreshToken, "someone-else"), http.StatusBadRequest, "invalid_grant")
 	oauthError(t, refresh("", clientID), http.StatusBadRequest, "invalid_request")
 	next := tokensOf(t, refresh(tk.RefreshToken, clientID))
-	if next.AccessToken != tk.AccessToken || next.RefreshToken == tk.RefreshToken {
+	// Both rotate: a leaked access token dies with the next refresh.
+	if next.AccessToken == tk.AccessToken || next.RefreshToken == tk.RefreshToken {
 		t.Fatalf("refresh: %+v after %+v", next, tk)
 	}
 	// Spent: the old refresh token is no longer anyone's.
@@ -405,10 +404,11 @@ func TestTokenExchangeAndRefresh(t *testing.T) {
 	}
 
 	// A session past its lifetime cannot be refreshed back to life.
+	sid, _, _ := sessionOfAccess(a, last.AccessToken)
 	a.mu.Lock()
-	s = a.sessions[tk.AccessToken]
+	s = a.sessions[sid]
 	s.created = time.Now().Add(-sessionTTL - time.Minute)
-	a.sessions[tk.AccessToken] = s
+	a.sessions[sid] = s
 	a.mu.Unlock()
 	oauthError(t, refresh(last.RefreshToken, clientID), http.StatusBadRequest, "invalid_grant")
 
@@ -500,7 +500,7 @@ func TestClientsAndTokensSurviveARestart(t *testing.T) {
 		if _, ok := again.clients[clientID]; !ok {
 			t.Fatalf("key %q: the client was forgotten", key)
 		}
-		s, ok := again.sessions[tk.AccessToken]
+		_, s, ok := sessionOfAccess(again, tk.AccessToken)
 		if key == "" {
 			if ok {
 				t.Fatal("a session was written without a key")
@@ -547,4 +547,16 @@ func TestTheOAuthEndpointsAreOpenToAgentsOfAnyOrigin(t *testing.T) {
 	if r := call(t, req); r.status != http.StatusForbidden {
 		t.Fatalf("a cross-origin cookie write: %d", r.status)
 	}
+}
+
+// sessionOfAccess finds the session an MCP access token belongs to.
+func sessionOfAccess(a *authManager, token string) (string, oauthSession, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for id, s := range a.sessions {
+		if s.mcpAccess == token && token != "" {
+			return id, s, true
+		}
+	}
+	return "", oauthSession{}, false
 }
