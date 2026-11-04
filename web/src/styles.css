@@ -319,7 +319,10 @@ a.sb-foot-button { text-decoration: none; }
 .app .title-input { width: 100%; min-width: 0; box-sizing: border-box; border-color: transparent; }
 .app .title-input:hover { border-color: var(--line); }
 /* The title follows the path as its last step, not as a separate item. */
-.doc-crumbs + .title-wrap { margin-left: -17px; }
+.doc-crumbs + .title-wrap { margin-left: -10px; }
+/* Less padding instead of a pull to the left: the field does not cover the
+   path's last slash. */
+.doc-crumbs + .title-wrap > * { padding-left: 2px; }
 .doc-crumbs + .title-static { margin-left: -12px; padding-left: 4px; }
 /* "Go to original" sits a small gap after the title's box. */
 .title-wrap + .to-original, .title-static + .to-original { margin-left: -9px; }
