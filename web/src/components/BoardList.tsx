@@ -1,8 +1,8 @@
 import { type DragEvent, type FormEvent, type ReactNode, useMemo, useState } from 'react';
 
-import type { Folder } from '../api';
+import type { Board, Folder } from '../api';
 import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../catalog';
-import { countIn, filterKind, inFolder, type KindFilter, pathOf, search } from '../library';
+import { countIn, type Entry, entriesOf, filterKind, inFolder, type KindFilter, pathOf, search } from '../library';
 import { folderPath, navigate } from '../router';
 import { untitled } from './BoardPage';
 import { BoardIcon, FolderIcon, PageIcon } from './icons';
@@ -91,6 +91,76 @@ export function BoardList({ folder, lead, whoami }: Props) {
     e.preventDefault();
     navigate(href);
   };
+
+  // Cards in the folder's order — the order set by dragging in the sidebar —
+  // folders and documents together, as the sidebar shows them.
+  const folderCard = (f: Folder) =>
+    renaming === f.id ? (
+            <li key={f.id}>
+              <NameForm
+                initial={f.name}
+                placeholder="Folder name"
+                submit="Rename"
+                onCancel={() => setRenaming(null)}
+                onSubmit={name =>
+                  act(async () => {
+                    await cat.renameFolder(f.id, name);
+                    setRenaming(null);
+                  })
+                }
+              />
+            </li>
+          ) : (
+            <li key={f.id}>
+              <a
+                className="board-card folder-card"
+                href={folderPath(f.id)}
+                onClick={open(folderPath(f.id))}
+                {...dragProps({ kind: 'folder', id: f.id })}
+                {...dropProps(f.id)}
+              >
+                <span className="board-title">
+                  <span className="kind kind-folder" aria-label="Folder">
+                    <FolderIcon />
+                  </span>
+                  {f.name}
+                </span>
+                <span className="board-meta">{plural(countIn(folders, docs ?? [], f.id), 'item')}</span>
+                {canWrite && (
+                  <ItemMenu
+                    items={[
+                      ['Rename', () => setRenaming(f.id)],
+                      ['Move to…', () => setMoving({ kind: 'folder', id: f.id })],
+                      ['Delete', () => act(() => cat.deleteFolder(f.id))],
+                    ]}
+                  />
+                )}
+              </a>
+            </li>
+          );
+  const docCard = (b: Board) => (
+
+          <li key={b.id}>
+            <a className="board-card" href={`/b/${b.id}`} onClick={open(`/b/${b.id}`)} {...dragProps({ kind: 'doc', id: b.id })}>
+              <span className="board-title">
+                <span className={`kind kind-${b.mode}`} aria-label={b.mode === 'page' ? 'Page' : 'Board'}>
+                  {b.mode === 'page' ? <PageIcon /> : <BoardIcon />}
+                </span>
+                {b.title || untitled(b.mode)}
+              </span>
+              <span className="board-meta">
+                {searching && pathOf(folders, b.folder).length > 0 && (
+                  <>{pathOf(folders, b.folder).map(f => f.name).join(' / ')} · </>
+                )}
+                Updated {when(b.updated)}
+              </span>
+              {canWrite && <ItemMenu items={[['Move to…', () => setMoving({ kind: 'doc', id: b.id })]]} />}
+            </a>
+          </li>
+  );
+  const shown: Entry<Board>[] = searching
+    ? shownDocs.map(d => ({ kind: 'doc' as const, id: d.id, rank: d.rank, name: d.title, doc: d }))
+    : entriesOf(folders, docs ?? [], folder).filter(e => e.kind === 'folder' || filterKind([e.doc], kind).length > 0);
 
   return (
     <div className="page">
@@ -190,70 +260,7 @@ export function BoardList({ folder, lead, whoami }: Props) {
       {searching && shownDocs.length === 0 && <p className="muted">Nothing matches.</p>}
 
       <ul className="board-grid">
-        {shownFolders.map(f =>
-          renaming === f.id ? (
-            <li key={f.id}>
-              <NameForm
-                initial={f.name}
-                placeholder="Folder name"
-                submit="Rename"
-                onCancel={() => setRenaming(null)}
-                onSubmit={name =>
-                  act(async () => {
-                    await cat.renameFolder(f.id, name);
-                    setRenaming(null);
-                  })
-                }
-              />
-            </li>
-          ) : (
-            <li key={f.id}>
-              <a
-                className="board-card folder-card"
-                href={folderPath(f.id)}
-                onClick={open(folderPath(f.id))}
-                {...dragProps({ kind: 'folder', id: f.id })}
-                {...dropProps(f.id)}
-              >
-                <span className="board-title">
-                  <span className="kind kind-folder" aria-label="Folder">
-                    <FolderIcon />
-                  </span>
-                  {f.name}
-                </span>
-                <span className="board-meta">{plural(countIn(folders, docs ?? [], f.id), 'item')}</span>
-                {canWrite && (
-                  <ItemMenu
-                    items={[
-                      ['Rename', () => setRenaming(f.id)],
-                      ['Move to…', () => setMoving({ kind: 'folder', id: f.id })],
-                      ['Delete', () => act(() => cat.deleteFolder(f.id))],
-                    ]}
-                  />
-                )}
-              </a>
-            </li>
-          ),
-        )}
-        {shownDocs.map(b => (
-          <li key={b.id}>
-            <a className="board-card" href={`/b/${b.id}`} onClick={open(`/b/${b.id}`)} {...dragProps({ kind: 'doc', id: b.id })}>
-              <span className="board-title">
-                <span className={`kind kind-${b.mode}`} aria-label={b.mode === 'page' ? 'Page' : 'Board'}>
-                  {b.mode === 'page' ? <PageIcon /> : <BoardIcon />}
-                </span>
-                {b.title || untitled(b.mode)}
-              </span>
-              <span className="board-meta">
-                {searching && pathOf(folders, b.folder).length > 0 && (
-                  <>{pathOf(folders, b.folder).map(f => f.name).join(' / ')} · </>
-                )}
-                Updated {when(b.updated)}
-              </span>
-              {canWrite && <ItemMenu items={[['Move to…', () => setMoving({ kind: 'doc', id: b.id })]]} />}
-            </a>
-          </li>
-        ))}
+        {shown.map(e => (e.kind === 'folder' ? folderCard(e.folder) : docCard(e.doc)))}
       </ul>
 
       {moving && (
