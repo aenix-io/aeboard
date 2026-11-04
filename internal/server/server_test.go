@@ -260,3 +260,45 @@ func TestTrashOverTheAPI(t *testing.T) {
 		t.Fatalf("get after delete: %d", code)
 	}
 }
+
+// Children are reordered and taken out over the API.
+func TestMoveChildren(t *testing.T) {
+	ts := newTestServer(t)
+	mk := func(title string) string {
+		var m boards.Meta
+		_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"`+title+`"}`)
+		_ = json.Unmarshal([]byte(body), &m)
+		return m.ID
+	}
+	p, a, b := mk("P"), mk("A"), mk("B")
+	for _, body := range []string{`{"doc":"` + a + `"}`, `{"doc":"` + b + `","before":"` + a + `"}`} {
+		if code, msg := do(t, "POST", ts.URL+"/api/v1/boards/"+p+"/children", body); code != http.StatusNoContent {
+			t.Fatalf("%s: %d %s", body, code, msg)
+		}
+	}
+	links := func() string {
+		_, body := do(t, "GET", ts.URL+"/api/v1/boards", "")
+		var l struct {
+			Boards []struct {
+				ID    string   `json:"id"`
+				Links []string `json:"links"`
+			} `json:"boards"`
+		}
+		_ = json.Unmarshal([]byte(body), &l)
+		for _, d := range l.Boards {
+			if d.ID == p {
+				return strings.Join(d.Links, ",")
+			}
+		}
+		return ""
+	}
+	if got := links(); got != b+","+a {
+		t.Fatalf("order: %s", got)
+	}
+	if code, _ := do(t, "DELETE", ts.URL+"/api/v1/boards/"+p+"/children/"+b, ""); code != http.StatusNoContent {
+		t.Fatalf("remove: %d", code)
+	}
+	if got := links(); got != a {
+		t.Fatalf("after remove: %s", got)
+	}
+}

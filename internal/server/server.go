@@ -17,6 +17,7 @@ import (
 	"github.com/reearth/ygo/provider/websocket"
 
 	"github.com/aenix-io/aenotes/internal/blobs"
+	"github.com/aenix-io/aenotes/internal/blocks"
 	"github.com/aenix-io/aenotes/internal/boards"
 	"github.com/aenix-io/aenotes/internal/mcpserver"
 )
@@ -120,6 +121,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
 	mux.HandleFunc("DELETE /api/v1/boards/{id}", s.deleteBoard)
 	mux.HandleFunc("POST /api/v1/boards/{id}/children", s.addChild)
+	mux.HandleFunc("DELETE /api/v1/boards/{id}/children/{child}", s.removeChild)
 	mux.HandleFunc("POST /api/v1/folders", s.createFolder)
 	mux.HandleFunc("PATCH /api/v1/folders/{id}", s.patchFolder)
 	mux.HandleFunc("DELETE /api/v1/folders/{id}", s.deleteFolder)
@@ -267,26 +269,48 @@ func (s *Server) deleteBoard(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// addChild puts a document inside another one (AFFiNE's "add linked doc"):
-// a link to it is added at the end of the parent's body.
+// addChild puts a document inside another one (AFFiNE's "add linked doc"),
+// or moves it among the other one's children: a link line to it goes at the
+// end of the parent's body, before or after the link to a sibling, or first.
 func (s *Server) addChild(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Doc string `json:"doc"`
+		Doc    string `json:"doc"`
+		Before string `json:"before"`
+		After  string `json:"after"`
+		First  bool   `json:"first"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	parent := r.PathValue("id")
-	upd, err := s.store.Link(parent, in.Doc, s.login(r))
+	upd, err := s.store.PlaceChild(parent, in.Doc, blocks.Place{Before: in.Before, After: in.After, First: in.First}, s.login(r))
 	if err != nil {
 		writeStoreError(w, err)
 		return
 	}
-	if upd != nil {
-		s.ApplyRemote(r.Context(), map[string][]byte{parent: upd})
-	}
+	s.sendLive(r, parent, upd)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeChild takes a document out of another one: its link lines go from
+// the parent's body. A mention inside the text is the author's and stays
+// (409).
+func (s *Server) removeChild(w http.ResponseWriter, r *http.Request) {
+	parent := r.PathValue("id")
+	upd, err := s.store.Unlink(parent, r.PathValue("child"), s.login(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	s.sendLive(r, parent, upd)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) sendLive(r *http.Request, id string, upd []byte) {
+	if upd != nil {
+		s.ApplyRemote(r.Context(), map[string][]byte{id: upd})
+	}
 }
 
 // Attachments are addressed per board so access can follow the board's
@@ -355,6 +379,9 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, boards.ErrNotEmpty):
 		writeError(w, http.StatusConflict, "the folder is not empty")
+		return
+	case errors.Is(err, boards.ErrInlineLink):
+		writeError(w, http.StatusConflict, "it is mentioned in the text there: remove the mention to take it out")
 		return
 	case errors.Is(err, boards.ErrNotTrashed):
 		writeError(w, http.StatusConflict, err.Error())

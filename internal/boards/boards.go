@@ -536,23 +536,50 @@ func (s *Store) Append(id string, specs []blocks.Spec, actor string) ([]byte, er
 // reference to it at the end of parent's body. A child it already links to
 // is left alone (nil update).
 func (s *Store) Link(parent, child, actor string) ([]byte, error) {
+	return s.PlaceChild(parent, child, blocks.Place{}, actor)
+}
+
+// PlaceChild puts child inside parent at place among parent's children —
+// moving its link line there when it has one, adding one when not.
+func (s *Store) PlaceChild(parent, child string, place blocks.Place, actor string) ([]byte, error) {
 	if parent == child {
 		return nil, fmt.Errorf("%w: a document cannot hold itself", ErrInvalid)
 	}
 	if _, err := s.Get(child); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	b, ok := s.liveLocked(parent)
-	has := ok && slices.Contains(b.links, child)
-	s.mu.Unlock()
-	if !ok {
-		return nil, ErrNotFound
+	return s.editState(parent, actor, func(state []byte) ([]byte, error) {
+		return blocks.PlaceLink(state, child, place)
+	})
+}
+
+// ErrInlineLink is returned for taking a child out of a document that
+// mentions it in its text: that link is the author's to remove.
+var ErrInlineLink = blocks.ErrInlineLink
+
+// Unlink takes child out of parent: the link lines and cards for it go
+// from parent's body (nil update when there are none).
+func (s *Store) Unlink(parent, child, actor string) ([]byte, error) {
+	return s.editState(parent, actor, func(state []byte) ([]byte, error) {
+		return blocks.Unlink(state, child)
+	})
+}
+
+// editState applies what edit makes of a document's state (nil: nothing).
+func (s *Store) editState(id, actor string, edit func([]byte) ([]byte, error)) ([]byte, error) {
+	state, err := s.LoadState(id)
+	if err != nil {
+		return nil, err
 	}
-	if has {
-		return nil, nil
+	upd, err := edit(state)
+	if err != nil || upd == nil {
+		return nil, err
 	}
-	return s.Append(parent, []blocks.Spec{blocks.Reference(child)}, actor)
+	// The update merges as a CRDT, so an edit that lands in between is kept.
+	if _, err := s.ApplyUpdate(id, upd, actor); err != nil {
+		return nil, err
+	}
+	return upd, nil
 }
 
 // ErrNotTrashed is returned for deleting a document for good that is not
