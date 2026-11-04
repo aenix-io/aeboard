@@ -1,4 +1,4 @@
-// Command aeboard is a collaborative whiteboard: a BlockSuite edgeless SPA
+// Command aenotes is a collaborative whiteboard: a BlockSuite edgeless SPA
 // embedded in one Go binary that syncs boards over Yjs (ygo) and keeps them
 // in a board store.
 package main
@@ -21,14 +21,14 @@ import (
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 
-	"github.com/aenix-io/aeboard/internal/blobs"
-	"github.com/aenix-io/aeboard/internal/boards"
-	"github.com/aenix-io/aeboard/internal/forge"
-	"github.com/aenix-io/aeboard/internal/ghcli"
-	"github.com/aenix-io/aeboard/internal/gitbackend"
-	"github.com/aenix-io/aeboard/internal/gitstore"
-	"github.com/aenix-io/aeboard/internal/server"
-	"github.com/aenix-io/aeboard/web"
+	"github.com/aenix-io/aenotes/internal/blobs"
+	"github.com/aenix-io/aenotes/internal/boards"
+	"github.com/aenix-io/aenotes/internal/forge"
+	"github.com/aenix-io/aenotes/internal/ghcli"
+	"github.com/aenix-io/aenotes/internal/gitbackend"
+	"github.com/aenix-io/aenotes/internal/gitstore"
+	"github.com/aenix-io/aenotes/internal/server"
+	"github.com/aenix-io/aenotes/web"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -36,7 +36,7 @@ var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "aeboard:", err)
+		fmt.Fprintln(os.Stderr, "aenotes:", err)
 		os.Exit(1)
 	}
 }
@@ -61,25 +61,25 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `aeboard — collaborative whiteboard
+	fmt.Fprint(os.Stderr, `aenotes — collaborative whiteboard
 
 Usage:
-  aeboard serve [flags]   run the server
-  aeboard version         print the version
+  aenotes serve [flags]   run the server
+  aenotes version         print the version
 
-Run "aeboard serve -h" for the serve flags.
+Run "aenotes serve -h" for the serve flags.
 `)
 }
 
 func runServe(args []string) error {
 	fl := flag.NewFlagSet("serve", flag.ContinueOnError)
-	addr := fl.String("addr", envOr("AEBOARD_ADDR", "127.0.0.1:8766"), "listen address")
-	data := fl.String("data", envOr("AEBOARD_DATA", "./data"), "data directory")
-	identity := fl.String("identity", envOr("AEBOARD_IDENTITY", "gh"),
+	addr := fl.String("addr", envOr("AENOTES_ADDR", "127.0.0.1:8766"), "listen address")
+	data := fl.String("data", envOr("AENOTES_DATA", "./data"), "data directory")
+	identity := fl.String("identity", envOr("AENOTES_IDENTITY", "gh"),
 		`who edits: "gh" (the account the local gh CLI is logged in as) or "none" (anonymous, names chosen in the browser)`)
-	repoFlag := fl.String("repo", envOr("AEBOARD_REPO", ""),
+	repoFlag := fl.String("repo", envOr("AENOTES_REPO", ""),
 		"git repository the boards live in: a local path or an https URL (empty: plain files under --data)")
-	branch := fl.String("branch", envOr("AEBOARD_BRANCH", "main"), "branch of --repo the boards live on")
+	branch := fl.String("branch", envOr("AENOTES_BRANCH", "main"), "branch of --repo the boards live on")
 	fetchEvery := fl.Duration("fetch-interval", 30*time.Second, "how often --repo is checked for others' changes")
 	var hosted hostedFlags
 	hosted.register(fl)
@@ -276,7 +276,7 @@ func openGit(ctx context.Context, cfg gitConfig, log *slog.Logger) (*gitbackend.
 		remote.URL = "file://" + abs
 	}
 	r, created, err := gitstore.OpenDir(ctx, filepath.Join(cfg.data, "repo.git"), remote, gitstore.Options{
-		Committer: gitstore.Identity{Name: "aeboard", Email: "aeboard@users.noreply.github.com"},
+		Committer: gitstore.Identity{Name: "aenotes", Email: "aenotes@users.noreply.github.com"},
 		Branch:    plumbing.NewBranchReferenceName(cfg.branch),
 	})
 	if err != nil {
@@ -288,7 +288,7 @@ func openGit(ctx context.Context, cfg gitConfig, log *slog.Logger) (*gitbackend.
 
 // httpsAuth is the credential for an https remote: the GitHub App's
 // installation token (minted per request, renewed before its hour is up),
-// else AEBOARD_GIT_TOKEN, else the gh CLI's token.
+// else AENOTES_GIT_TOKEN, else the gh CLI's token.
 func httpsAuth(ctx context.Context, cfg gitConfig) (transport.AuthMethod, error) {
 	app, err := githubApp()
 	if err != nil {
@@ -302,10 +302,10 @@ func httpsAuth(ctx context.Context, cfg gitConfig) (transport.AuthMethod, error)
 		}
 		return app.GitAuthFor(cfg.repo), nil
 	}
-	tok := os.Getenv("AEBOARD_GIT_TOKEN")
+	tok := os.Getenv("AENOTES_GIT_TOKEN")
 	if tok == "" {
 		if tok, err = ghcli.NewTokenSource().Token(ctx); err != nil {
-			return nil, fmt.Errorf("--repo %s needs a credential: set AEBOARD_GITHUB_APP_ID and AEBOARD_GITHUB_APP_KEY, AEBOARD_GIT_TOKEN, or log in with gh: %w", cfg.repo, err)
+			return nil, fmt.Errorf("--repo %s needs a credential: set AENOTES_GITHUB_APP_ID and AENOTES_GITHUB_APP_KEY, AENOTES_GIT_TOKEN, or log in with gh: %w", cfg.repo, err)
 		}
 	}
 	return &githttp.BasicAuth{Username: "x-access-token", Password: tok}, nil

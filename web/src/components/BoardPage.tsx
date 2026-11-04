@@ -40,7 +40,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
         setBoard(b);
         setTitle(b.title);
         setView(v => v ?? b.mode);
-        document.title = `${b.title || untitled(b.mode)} · aeboard`;
+        document.title = `${b.title || untitled(b.mode)} · aenotes`;
       })
       .catch(e => setError(String(e.message ?? e)));
     api
@@ -48,7 +48,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
       .then(l => setFolders(l.folders ?? []))
       .catch(() => {});
     return () => {
-      document.title = 'aeboard';
+      document.title = 'aenotes';
     };
   }, [id]);
 
@@ -72,14 +72,14 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
           return;
         }
         session.current = s;
-        (window as unknown as { aeboard: unknown }).aeboard = s;
+        (window as unknown as { aenotes: unknown }).aenotes = s;
         // The title lives in the document: follow it when it is typed in the
         // page's title line, or by someone else.
         const sub = s.workspace.slots.docListUpdated.subscribe(() => {
           const t = s.workspace.meta.getDocMeta(id)?.title ?? '';
           setTitle(t);
           setBoard(b => (b ? { ...b, title: t } : b));
-          document.title = `${t || untitled(board.mode)} · aeboard`;
+          document.title = `${t || untitled(board.mode)} · aenotes`;
         });
         unsub = () => sub.unsubscribe();
       })
@@ -108,7 +108,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
       const b = await api.updateBoard(id, patch);
       setBoard(b);
       setTitle(b.title);
-      document.title = `${b.title} · aeboard`;
+      document.title = `${b.title} · aenotes`;
     } catch (e) {
       setError(String((e as Error).message ?? e));
     }

@@ -27,7 +27,7 @@ import (
 
 	"github.com/reearth/ygo/crdt"
 
-	"github.com/aenix-io/aeboard/internal/seed"
+	"github.com/aenix-io/aenotes/internal/seed"
 )
 
 // ErrNotFound is returned for an id that names no board.

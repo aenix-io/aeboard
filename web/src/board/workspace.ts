@@ -1,4 +1,4 @@
-// A BlockSuite Workspace over every aeboard document the visitor can see.
+// A BlockSuite Workspace over every aenotes document the visitor can see.
 //
 // BlockSuite's reference TestWorkspace keeps every document as a Yjs
 // *subdocument* of one root doc. The y-websocket protocol syncs one Y.Doc
@@ -62,14 +62,14 @@ export function newDocID(): string {
 }
 
 export class DocsWorkspace implements Workspace {
-  readonly id = 'aeboard';
+  readonly id = 'aenotes';
   readonly meta: TestMeta;
   readonly idGenerator: IdGenerator;
   readonly blobSync: BlobEngine;
   readonly slots = { docListUpdated: new Subject<void>() };
   storeExtensions: ExtensionType[] = [];
 
-  private readonly _rootDoc = new Y.Doc({ guid: 'aeboard:workspace' });
+  private readonly _rootDoc = new Y.Doc({ guid: 'aenotes:workspace' });
   private readonly _docs = new Map<string, LiveDoc>();
   private readonly _modes = new Map<string, CatalogEntry['mode']>();
 
@@ -138,13 +138,13 @@ export class DocsWorkspace implements Workspace {
     return this._entry(docId);
   }
 
-  /** live is getDoc with aeboard's own surface (sync, provider). */
+  /** live is getDoc with aenotes's own surface (sync, provider). */
   live(docId: string): LiveDoc | null {
     return this._entry(docId);
   }
 
   removeDoc(): void {
-    throw new Error('aeboard: documents are not deleted from the editor');
+    throw new Error('aenotes: documents are not deleted from the editor');
   }
 
   dispose(): void {
@@ -234,7 +234,7 @@ export class LiveDoc implements Doc {
           this._creating = undefined;
           connect();
         },
-        err => console.error(`aeboard: could not create document ${this.id}`, err),
+        err => console.error(`aenotes: could not create document ${this.id}`, err),
       );
     } else {
       connect();
@@ -281,7 +281,7 @@ export class LiveDoc implements Doc {
   removeStore = (options: RemoveStoreOptions) => this._container.removeStore(options);
 
   remove(): void {
-    throw new Error('aeboard: documents are not deleted from the editor');
+    throw new Error('aenotes: documents are not deleted from the editor');
   }
 
   dispose(): void {}

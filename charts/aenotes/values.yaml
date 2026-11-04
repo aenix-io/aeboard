@@ -1,10 +1,10 @@
-# aeboard runs as ONE replica: the live rooms, the write-behind queue and the
+# aenotes runs as ONE replica: the live rooms, the write-behind queue and the
 # git clone under /data have exactly one writer. 0 parks it (maintenance, a
 # move between hosts); anything above 1 is refused.
 replicaCount: 1
 
 image:
-  repository: ghcr.io/aenix-io/aeboard
+  repository: ghcr.io/aenix-io/aenotes
   # Defaults to the chart's appVersion.
   tag: ""
   pullPolicy: IfNotPresent
@@ -13,28 +13,28 @@ imagePullSecrets: []
 
 # The board repository (the boards' source of truth).
 repo: {}
-#  url: https://github.com/example/aeboard-db
+#  url: https://github.com/example/aenotes-db
 #  branch: main
 
-# Hosted mode: visitors sign in with GitHub (the AEBOARD_GITHUB_* settings in
+# Hosted mode: visitors sign in with GitHub (the AENOTES_GITHUB_* settings in
 # existingSecret/env). false runs the anonymous mode — only behind something
 # that authenticates for it.
 hosted: true
 
-# The Secret holding the AEBOARD_* settings that must not live in values:
-# AEBOARD_SESSION_KEY, AEBOARD_GITHUB_CLIENT_SECRET, AEBOARD_GITHUB_APP_KEY
-# (base64 of the PEM), AEBOARD_GIT_TOKEN, ... Every key becomes an environment
+# The Secret holding the AENOTES_* settings that must not live in values:
+# AENOTES_SESSION_KEY, AENOTES_GITHUB_CLIENT_SECRET, AENOTES_GITHUB_APP_KEY
+# (base64 of the PEM), AENOTES_GIT_TOKEN, ... Every key becomes an environment
 # variable. Create it out of band, e.g.
-#   kubectl create secret generic aeboard-env --from-env-file=aeboard.env
+#   kubectl create secret generic aenotes-env --from-env-file=aenotes.env
 # See docs/deploy.md for the full list of variables.
 existingSecret: ""
 
-# Plain (non-secret) AEBOARD_* settings, rendered as environment variables.
+# Plain (non-secret) AENOTES_* settings, rendered as environment variables.
 # They win over the same keys in existingSecret.
 env: {}
-#  AEBOARD_BASE_URL: https://aeboard.example.com
-#  AEBOARD_GITHUB_CLIENT_ID: Iv23xxxxxxxx
-#  AEBOARD_GITHUB_APP_ID: "123456"
+#  AENOTES_BASE_URL: https://aenotes.example.com
+#  AENOTES_GITHUB_CLIENT_ID: Iv23xxxxxxxx
+#  AENOTES_GITHUB_APP_ID: "123456"
 
 # Soft heap ceiling for the Go runtime. Keep it below the memory limit so the
 # collector works harder before the kernel kills the pod.
@@ -70,10 +70,10 @@ affinity: {}
 ingress:
   enabled: false
   className: ""
-  host: aeboard.example.com
+  host: aenotes.example.com
   # cert-manager ClusterIssuer; empty = no TLS annotation.
   clusterIssuer: ""
-  tlsSecretName: aeboard-tls
+  tlsSecretName: aenotes-tls
   annotations:
     # The editor keeps a WebSocket open per board, the header an SSE stream.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
@@ -90,7 +90,7 @@ cloudflared:
     tag: "2026.10.7"
   replicas: 1
   tunnelId: ""
-  hostname: aeboard.example.com
+  hostname: aenotes.example.com
   existingSecret: ""
   # http2 over TCP/443: QUIC drops silently on some networks while the
   # process stays alive, so nothing restarts it.

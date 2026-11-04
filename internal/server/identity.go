@@ -15,7 +15,7 @@ type Identity struct {
 
 // IdentityFunc resolves a request's identity; ok=false means anonymous.
 //
-// Local mode (`aeboard serve` on a laptop) answers every request with the
+// Local mode (`aenotes serve` on a laptop) answers every request with the
 // account the local gh CLI is logged in as, like `aeman serve`; the hosted
 // mode answers from the visitor's session (see EnableOAuth).
 type IdentityFunc func(r *http.Request) (Identity, bool)

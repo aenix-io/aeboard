@@ -11,7 +11,7 @@ import (
 // The hosted server refuses to start on a forge it cannot ask: github.com
 // is GitHub; another host, or a local path, is an error, not a guess.
 func TestForRepoKnowsGitHubOnly(t *testing.T) {
-	for _, u := range []string{"https://github.com/aenix-org/aeboard-db", "git@github.com:aenix-org/aeboard-db.git"} {
+	for _, u := range []string{"https://github.com/aenix-org/aenotes-db", "git@github.com:aenix-org/aenotes-db.git"} {
 		f, err := ForRepo(u)
 		if err != nil || f.Kind() != GitHub {
 			t.Errorf("ForRepo(%q) = %v, %v; want GitHub", u, f, err)
@@ -27,9 +27,9 @@ func TestForRepoKnowsGitHubOnly(t *testing.T) {
 func TestRepoRefIsOwnerSlashRepo(t *testing.T) {
 	gh := NewGitHub()
 	for in, want := range map[string]string{
-		"https://github.com/acme/aeboard-db.git": "acme/aeboard-db",
-		"https://github.com/acme/aeboard-db/":    "acme/aeboard-db",
-		"git@github.com:acme/aeboard-db.git":     "acme/aeboard-db",
+		"https://github.com/acme/aenotes-db.git": "acme/aenotes-db",
+		"https://github.com/acme/aenotes-db/":    "acme/aenotes-db",
+		"git@github.com:acme/aenotes-db.git":     "acme/aenotes-db",
 	} {
 		if got, err := gh.RepoRef(in); err != nil || got != want {
 			t.Errorf("RepoRef(%q) = %q, %v; want %q", in, got, err, want)

@@ -8,7 +8,7 @@ import (
 
 	"github.com/reearth/ygo/crdt"
 
-	"github.com/aenix-io/aeboard/internal/ytext"
+	"github.com/aenix-io/aenotes/internal/ytext"
 )
 
 // Dir is the directory every board lives under, in any backend.

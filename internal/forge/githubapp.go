@@ -1,5 +1,5 @@
 // Ported from aeman internal/forge/githubapp.go (Apache-2.0); the
-// system-git credential helper is dropped (aeboard pushes through go-git).
+// system-git credential helper is dropped (aenotes pushes through go-git).
 
 package forge
 
@@ -252,7 +252,7 @@ func (a *GitHubApp) get(ctx context.Context, method, path string) (*http.Respons
 	}
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "aeboard")
+	req.Header.Set("User-Agent", "aenotes")
 	return a.client.Do(req)
 }
 

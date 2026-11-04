@@ -7,10 +7,10 @@ import { render, type TemplateResult } from 'lit';
 type Content = string | TemplateResult;
 
 function stack(): HTMLElement {
-  let el = document.getElementById('aeboard-toasts');
+  let el = document.getElementById('aenotes-toasts');
   if (!el) {
     el = document.createElement('div');
-    el.id = 'aeboard-toasts';
+    el.id = 'aenotes-toasts';
     el.setAttribute('role', 'status');
     document.body.append(el);
   }
@@ -23,7 +23,7 @@ function put(into: HTMLElement, c: Content | undefined) {
   else render(c, into);
 }
 
-// aeboard has no outline sidebar: BlockSuite's pointers to it go.
+// aenotes has no outline sidebar: BlockSuite's pointers to it go.
 function dropOutline(msg: Content | undefined): Content | undefined {
   return typeof msg === 'string' ? msg.replace(/\s*Find it in the TOC for quick navigation\.?$/, '') : msg;
 }
@@ -38,15 +38,15 @@ function show(opts: {
   onClose?: () => void;
 }) {
   const card = document.createElement('div');
-  card.className = `aeboard-toast aeboard-toast-${opts.accent ?? 'info'}`;
+  card.className = `aenotes-toast aenotes-toast-${opts.accent ?? 'info'}`;
   const title = document.createElement('div');
-  title.className = 'aeboard-toast-title';
+  title.className = 'aenotes-toast-title';
   put(title, opts.title);
   card.append(title);
   const message = dropOutline(opts.message);
   if (message) {
     const m = document.createElement('div');
-    m.className = 'aeboard-toast-message';
+    m.className = 'aenotes-toast-message';
     put(m, message);
     card.append(m);
   }
@@ -60,7 +60,7 @@ function show(opts: {
   const actions = (opts.actions ?? []).filter(a => a.key !== 'view-in-toc');
   if (actions.length) {
     const row = document.createElement('div');
-    row.className = 'aeboard-toast-actions';
+    row.className = 'aenotes-toast-actions';
     for (const a of actions) {
       const b = document.createElement('button');
       b.type = 'button';

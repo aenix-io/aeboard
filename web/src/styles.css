@@ -1,4 +1,4 @@
-/* aeboard shell styles. Tokens follow aeman's light theme so the two tools
+/* aenotes shell styles. Tokens follow aeman's light theme so the two tools
    read as one family; the board canvas itself is styled by BlockSuite. */
 :root {
   color-scheme: light;
@@ -148,15 +148,15 @@ a.button.primary:hover { filter: brightness(0.95); }
 .kind-page { color: var(--accent); }
 
 /* BlockSuite's notifications (src/board/notifications.ts) */
-#aeboard-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }
-.aeboard-toast { background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(27, 31, 36, 0.16); font-size: 13px; }
-.aeboard-toast-success { border-left-color: #1a7f37; }
-.aeboard-toast-warning { border-left-color: #b8860b; }
-.aeboard-toast-error { border-left-color: var(--danger); }
-.aeboard-toast-title { font-weight: 600; }
-.aeboard-toast-message { color: var(--muted); margin-top: 2px; }
-.aeboard-toast-actions { display: flex; gap: 6px; margin-top: 8px; }
-.aeboard-toast-actions button { padding: 2px 10px; font-size: 12px; }
+#aenotes-toasts { position: fixed; right: 16px; bottom: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 32px)); }
+.aenotes-toast { background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(27, 31, 36, 0.16); font-size: 13px; }
+.aenotes-toast-success { border-left-color: #1a7f37; }
+.aenotes-toast-warning { border-left-color: #b8860b; }
+.aenotes-toast-error { border-left-color: var(--danger); }
+.aenotes-toast-title { font-weight: 600; }
+.aenotes-toast-message { color: var(--muted); margin-top: 2px; }
+.aenotes-toast-actions { display: flex; gap: 6px; margin-top: 8px; }
+.aenotes-toast-actions button { padding: 2px 10px; font-size: 12px; }
 
 /* folders on the start page */
 .crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 20px; font-weight: 600; }

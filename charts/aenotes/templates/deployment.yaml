@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "aeboard.fullname" . }}
+  name: {{ include "aenotes.fullname" . }}
   labels:
-    {{- include "aeboard.labels" . | nindent 4 }}
+    {{- include "aenotes.labels" . | nindent 4 }}
 spec:
   # One writer: the live rooms, the write-behind queue and the git clone under
   # /data belong to one process — never two pods, not even during a rollout.
   {{- if gt (int .Values.replicaCount) 1 }}
-  {{- fail "replicaCount must be 0 or 1: aeboard has exactly one writer" }}
+  {{- fail "replicaCount must be 0 or 1: aenotes has exactly one writer" }}
   {{- end }}
   replicas: {{ .Values.replicaCount }}
   strategy:
     type: Recreate
   selector:
     matchLabels:
-      {{- include "aeboard.selectorLabels" . | nindent 6 }}
+      {{- include "aenotes.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -23,7 +23,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "aeboard.selectorLabels" . | nindent 8 }}
+        {{- include "aenotes.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -39,7 +39,7 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: aeboard
+        - name: aenotes
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default (printf "v%s" .Chart.AppVersion) }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
@@ -57,12 +57,12 @@ spec:
                 name: {{ . }}
           {{- end }}
           env:
-            - name: AEBOARD_DATA
+            - name: AENOTES_DATA
               value: /data
             {{- with .Values.repo }}
-            - name: AEBOARD_REPO
+            - name: AENOTES_REPO
               value: {{ .url | quote }}
-            - name: AEBOARD_BRANCH
+            - name: AENOTES_BRANCH
               value: {{ .branch | default "main" | quote }}
             {{- end }}
             # git (file:// remotes, maintenance) wants a writable HOME.
@@ -111,7 +111,7 @@ spec:
         - name: data
           {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: {{ include "aeboard.claimName" . }}
+            claimName: {{ include "aenotes.claimName" . }}
           {{- else }}
           emptyDir: {}
           {{- end }}

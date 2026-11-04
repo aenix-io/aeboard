@@ -1,5 +1,5 @@
 // Package web embeds the built single-page application so it can be served by
-// the aeboard binary without any external assets.
+// the aenotes binary without any external assets.
 package web
 
 import (

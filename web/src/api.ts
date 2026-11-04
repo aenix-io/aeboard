@@ -1,4 +1,4 @@
-// The aeboard REST API (/api/v1).
+// The aenotes REST API (/api/v1).
 
 export interface Board {
   id: string;
@@ -24,7 +24,7 @@ export interface BoardList {
 
 /** Fired when the API answers 401: the session ended (expired, signed out
  *  elsewhere, revoked on GitHub). The app asks /me again. */
-export const SIGNED_OUT = 'aeboard:signed-out';
+export const SIGNED_OUT = 'aenotes:signed-out';
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const resp = await fetch(`/api/v1${path}`, {

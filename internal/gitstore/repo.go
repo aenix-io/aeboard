@@ -1,4 +1,4 @@
-// Package gitstore keeps aeboard's state in a git repository through
+// Package gitstore keeps aenotes's state in a git repository through
 // go-git's object store alone — blobs, trees and commits written directly,
 // never a worktree — and syncs it with one remote branch.
 //
@@ -71,8 +71,8 @@ type Action struct {
 	Summary string
 	// At is the commit date. Zero means now.
 	At time.Time
-	// Trailers are extra "Aeboard-Key: value" lines, written sorted by
-	// key. Keys must start with "Aeboard-".
+	// Trailers are extra "Aenotes-Key: value" lines, written sorted by
+	// key. Keys must start with "Aenotes-".
 	Trailers map[string]string
 }
 
@@ -86,7 +86,7 @@ type FileWrite struct {
 // ErrNotFound is returned by readers for a missing path.
 var ErrNotFound = errors.New("gitstore: not found")
 
-const trailerPrefix = "Aeboard-"
+const trailerPrefix = "Aenotes-"
 
 // Init creates the repository in an empty storer, HEAD on the branch.
 func Init(s storage.Storer, opts Options) (*Repo, error) {

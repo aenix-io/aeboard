@@ -9,13 +9,13 @@ const open = async (name, path) => {
   const p = await (await browser.newContext({ viewport: { width: 1280, height: 860 } })).newPage();
   p.on('pageerror', e => console.log(`[${name}] pageerror`, e.message));
   p.on('console', m => m.type() === 'error' && console.log(`[${name}] console`, m.text().slice(0, 200)));
-  await p.addInitScript(n => localStorage.setItem('aeboard.name', n), name);
+  await p.addInitScript(n => localStorage.setItem('aenotes.name', n), name);
   if (path) await p.goto(base + path);
   return p;
 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const blocks = p => p.evaluate(() => window.aeboard.editor.doc.getAllModels().map(m => m.flavour));
-const text = p => p.evaluate(() => window.aeboard.editor.doc.getAllModels().filter(m => m.flavour === 'affine:paragraph').map(m => m.props.text.toString()).join('|'));
+const blocks = p => p.evaluate(() => window.aenotes.editor.doc.getAllModels().map(m => m.flavour));
+const text = p => p.evaluate(() => window.aenotes.editor.doc.getAllModels().filter(m => m.flavour === 'affine:paragraph').map(m => m.props.text.toString()).join('|'));
 
 // 1. New page through the list.
 const a = await open('alice', '/');

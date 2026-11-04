@@ -25,8 +25,8 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 
-	"github.com/aenix-io/aeboard/internal/boards"
-	"github.com/aenix-io/aeboard/internal/gitstore"
+	"github.com/aenix-io/aenotes/internal/boards"
+	"github.com/aenix-io/aenotes/internal/gitstore"
 )
 
 // Options configures the backend.
@@ -172,11 +172,11 @@ func (b *Backend) Save(_ context.Context, snaps []boards.Snapshot) error {
 func actionFor(sn boards.Snapshot) gitstore.Action {
 	a := gitstore.Action{
 		Summary:  fmt.Sprintf("Edit board %q", sn.Meta.Title),
-		Trailers: map[string]string{"Aeboard-Board": sn.Meta.ID},
+		Trailers: map[string]string{"Aenotes-Board": sn.Meta.ID},
 	}
 	if len(sn.Editors) > 0 {
 		a.Actor = sn.Editors[0]
-		a.Trailers["Aeboard-Editors"] = strings.Join(sn.Editors, " ")
+		a.Trailers["Aenotes-Editors"] = strings.Join(sn.Editors, " ")
 	}
 	return a
 }
@@ -385,7 +385,7 @@ func (b *Backend) integrate(tip plumbing.Hash) (incoming, error) {
 	}
 	a := gitstore.Action{
 		Summary:  "Merge boards from the remote",
-		Trailers: map[string]string{"Aeboard-Merged": strings.Join(merged, " ")},
+		Trailers: map[string]string{"Aenotes-Merged": strings.Join(merged, " ")},
 	}
 	if _, err := b.repo.Merge(tip, a, writes); err != nil {
 		return incoming{}, fmt.Errorf("merge: %w", err)

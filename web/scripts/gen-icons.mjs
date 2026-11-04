@@ -1,4 +1,4 @@
-// Renders web/icon/aeboard.svg (the source artwork: a rounded square with
+// Renders web/icon/aenotes.svg (the source artwork: a rounded square with
 // transparent corners) into the PNG favicons under web/public. The SVG is a
 // traced bitmap of ~850 KB, too heavy to ship as the favicon itself.
 // usage (from web/): node scripts/gen-icons.mjs
@@ -6,7 +6,7 @@ import { chromium } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const svg = readFileSync(resolve('icon/aeboard.svg'), 'utf8');
+const svg = readFileSync(resolve('icon/aenotes.svg'), 'utf8');
 const sizes = { 'favicon-32.png': 32, 'apple-touch-icon.png': 180, 'icon-192.png': 192, 'icon-512.png': 512 };
 const browser = await chromium.launch();
 for (const [name, size] of Object.entries(sizes)) {

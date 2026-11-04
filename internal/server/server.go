@@ -1,4 +1,4 @@
-// Package server is aeboard's HTTP surface: the board REST API, the Yjs sync
+// Package server is aenotes's HTTP surface: the board REST API, the Yjs sync
 // WebSocket (ygo) and the embedded SPA.
 package server
 
@@ -15,8 +15,8 @@ import (
 
 	"github.com/reearth/ygo/provider/websocket"
 
-	"github.com/aenix-io/aeboard/internal/blobs"
-	"github.com/aenix-io/aeboard/internal/boards"
+	"github.com/aenix-io/aenotes/internal/blobs"
+	"github.com/aenix-io/aenotes/internal/boards"
 )
 
 // Server wires the board store to HTTP.

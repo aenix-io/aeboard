@@ -1,4 +1,4 @@
-// Two aeboard servers over one git remote: a board made on A shows up on B,
+// Two aenotes servers over one git remote: a board made on A shows up on B,
 // and shapes drawn on each reach the other's open board without a reload.
 // usage: node e2e/two-servers.mjs <baseA> <baseB>
 import { chromium } from '@playwright/test';
@@ -30,7 +30,7 @@ const draw = async (p, x, y) => {
   await p.mouse.move(x, y); await p.mouse.down(); await p.mouse.move(x + 80, y + 60, { steps: 6 }); await p.mouse.up();
   await p.keyboard.press('Escape');
 };
-const count = p => p.evaluate(() => window.aeboard.editor.doc.getBlocksByFlavour('affine:surface')[0].model.elementModels.length);
+const count = p => p.evaluate(() => window.aenotes.editor.doc.getBlocksByFlavour('affine:surface')[0].model.elementModels.length);
 const waitCount = async (p, n) => {
   const t = Date.now();
   while (Date.now() - t < 40000) { if ((await count(p)) >= n) return Math.round((Date.now() - t) / 1000); await sleep(500); }

@@ -26,6 +26,6 @@ const [b, c] = [await page(), await page()];
 await Promise.all([b.goto(`${base}/b/${fresh.id}`), c.goto(`${base}/b/${fresh.id}`)]);
 await Promise.all([b.waitForSelector('affine-edgeless-root'), c.waitForSelector('affine-edgeless-root')]);
 await b.waitForTimeout(1500);
-const roots = p => p.evaluate(() => window.aeboard.editor.doc.getAllModels().map(m => m.flavour).join(','));
+const roots = p => p.evaluate(() => window.aenotes.editor.doc.getAllModels().map(m => m.flavour).join(','));
 console.log('concurrent open B:', await roots(b), '| C:', await roots(c));
 await browser.close();

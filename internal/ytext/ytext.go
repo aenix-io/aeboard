@@ -31,7 +31,9 @@ import (
 	"strings"
 )
 
-// Format is the first line of every document.
+// Format is the first line of every document. It is a format id, not the
+// product name: it predates the rename to aenotes and stays, so the states
+// already stored keep reading.
 const Format = "aeboard-yjs-v1"
 
 // Content refs of the Yjs V1 encoding (the low five bits of a struct's info

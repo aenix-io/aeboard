@@ -11,11 +11,11 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/reearth/ygo/crdt"
 
-	"github.com/aenix-io/aeboard/internal/boards"
-	"github.com/aenix-io/aeboard/internal/gitstore"
+	"github.com/aenix-io/aenotes/internal/boards"
+	"github.com/aenix-io/aenotes/internal/gitstore"
 )
 
-// replica is one aeboard server: its own clone on disk, store and backend.
+// replica is one aenotes server: its own clone on disk, store and backend.
 type replica struct {
 	dir     string
 	backend *Backend
@@ -37,7 +37,7 @@ func newReplica(t *testing.T, remote gitstore.Remote, dir string) *replica {
 	t.Helper()
 	ctx := context.Background()
 	repo, _, err := gitstore.OpenDir(ctx, dir, remote, gitstore.Options{
-		Committer: gitstore.Identity{Name: "aeboard", Email: "aeboard@localhost"},
+		Committer: gitstore.Identity{Name: "aenotes", Email: "aenotes@localhost"},
 		Branch:    plumbing.NewBranchReferenceName("test/boards"),
 	})
 	if err != nil {
@@ -215,7 +215,7 @@ func TestCommitsAreAttributed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Author.Name != "alice" || !containsLine(c.Message, "Aeboard-Editors: alice user-x") || !containsLine(c.Message, "Aeboard-Board: "+m.ID) {
+	if c.Author.Name != "alice" || !containsLine(c.Message, "Aenotes-Editors: alice user-x") || !containsLine(c.Message, "Aenotes-Board: "+m.ID) {
 		t.Fatalf("commit author=%q message=%q", c.Author.Name, c.Message)
 	}
 }

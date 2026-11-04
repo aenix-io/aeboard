@@ -4,4 +4,4 @@
 web/dist/*
 !web/dist/.gitkeep
 data
-aeboard
+aenotes

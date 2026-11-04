@@ -3,7 +3,7 @@
 import type { BlobSource } from '@blocksuite/affine/sync';
 
 export class ServerBlobSource implements BlobSource {
-  readonly name = 'aeboard-server';
+  readonly name = 'aenotes-server';
   readonly readonly = false;
   // Keys are content hashes, so a cached blob can never go stale.
   private readonly cache = new Map<string, Blob>();

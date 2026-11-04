@@ -4,7 +4,7 @@
 // The packages export their src/*.ts, so without this `tsc` type-checks
 // BlockSuite's own sources under our compiler settings (and fails on code
 // that is fine in its own build). Mapping to the .d.ts lets skipLibCheck
-// skip them, and `tsc` checks only aeboard's code. Vite still bundles src.
+// skip them, and `tsc` checks only aenotes's code. Vite still bundles src.
 //
 // usage (from web/): node scripts/gen-blocksuite-paths.mjs
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';

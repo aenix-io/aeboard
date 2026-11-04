@@ -4,7 +4,7 @@
 // server pushes with. Everything the server does with a forge goes through
 // the Forge interface, so GitLab can follow; only GitHub is implemented.
 //
-// Ported from aeman internal/forge (Apache-2.0), trimmed to what aeboard
+// Ported from aeman internal/forge (Apache-2.0), trimmed to what aenotes
 // uses: sign-in, the visitor's access to one repository, the App token.
 // aeman's member listing, people lookup and GitLab are left out.
 package forge
@@ -23,7 +23,7 @@ import (
 // Kind names a forge.
 type Kind string
 
-// The forges aeboard knows.
+// The forges aenotes knows.
 const (
 	GitHub Kind = "github"
 )

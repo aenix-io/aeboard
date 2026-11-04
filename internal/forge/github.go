@@ -72,7 +72,7 @@ func (g *github) get(ctx context.Context, client *http.Client, token, path strin
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "aeboard")
+	req.Header.Set("User-Agent", "aenotes")
 	return client.Do(req) //nolint:gosec // see above
 }
 

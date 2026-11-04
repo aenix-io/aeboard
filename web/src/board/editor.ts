@@ -1,4 +1,4 @@
-// Mounts the BlockSuite editor over one aeboard document — a board
+// Mounts the BlockSuite editor over one aenotes document — a board
 // (edgeless) or a page — synced through the server, one room per document.
 import '@blocksuite/affine/effects';
 import '@toeverything/theme/style.css';

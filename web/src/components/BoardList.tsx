@@ -16,7 +16,7 @@ const when = (iso: string) => {
 type Mode = 'edgeless' | 'page';
 /** What is being dragged: a document or a folder. */
 type Dragged = { kind: 'doc' | 'folder'; id: string };
-const DRAG_TYPE = 'application/x-aeboard-item';
+const DRAG_TYPE = 'application/x-aenotes-item';
 
 interface Props {
   /** The folder on screen; "" is the top level. */
@@ -479,7 +479,7 @@ const KINDS: Array<[KindFilter, string]> = [
   ['edgeless', 'Boards'],
 ];
 
-const KIND_KEY = 'aeboard.kindFilter';
+const KIND_KEY = 'aenotes.kindFilter';
 
 function loadKind(): KindFilter {
   try {
