@@ -345,3 +345,10 @@ a.sb-foot-button { text-decoration: none; }
 /* AFFiNE's icons: the buttons hold them centered */
 .sb-icon-button, .sidebar-toggle { display: inline-flex; align-items: center; justify-content: center; }
 .sb-shortcut .kind { color: var(--muted); }
+
+/* menus: an icon before each entry, as AFFiNE's */
+.menu-item { display: flex; align-items: center; gap: 10px; }
+.menu-icon { flex: none; display: inline-flex; color: var(--muted); }
+.sb-section-actions { display: inline-flex; align-items: center; gap: 2px; }
+.sb-menu-list { min-width: 200px; padding: 4px; border-radius: 8px; }
+.sb-menu-list .menu-item { padding: 6px 10px; border-radius: 6px; font-size: 13px; }

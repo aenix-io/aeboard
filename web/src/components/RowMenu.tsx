@@ -4,7 +4,10 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
  *  to the window (the tree scrolls and would clip it) and closes on a click
  *  elsewhere, Escape or a choice — not when the pointer wanders off, which
  *  would close it on the way from the button to the list. */
-export function RowMenu({ label, glyph, items }: { label: string; glyph: ReactNode; items: Array<[string, () => void]> }) {
+/** A menu entry: its label, what it does, and an icon before the label. */
+export type MenuItem = [string, () => void, ReactNode?];
+
+export function RowMenu({ label, glyph, items }: { label: string; glyph: ReactNode; items: MenuItem[] }) {
   const [at, setAt] = useState<{ top: number; left: number } | null>(null);
   const root = useRef<HTMLSpanElement>(null);
   useEffect(() => {
@@ -39,24 +42,26 @@ export function RowMenu({ label, glyph, items }: { label: string; glyph: ReactNo
             return;
           }
           const r = e.currentTarget.getBoundingClientRect();
-          setAt({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 180) });
+          setAt({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 230) });
         }}
       >
         {glyph}
       </button>
       {at && (
         <span className="item-menu-list sb-menu-list" role="menu" style={{ position: 'fixed', top: at.top, left: at.left }}>
-          {items.map(([text, run]) => (
+          {items.map(([text, run, icon]) => (
             <button
               key={text}
               type="button"
               role="menuitem"
+              className="menu-item"
               onClick={e => {
                 e.stopPropagation();
                 setAt(null);
                 run();
               }}
             >
+              {icon && <span className="menu-icon">{icon}</span>}
               {text}
             </button>
           ))}

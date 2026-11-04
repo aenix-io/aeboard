@@ -14,6 +14,7 @@ import {
   LinkedBoardShortcutIcon,
   LinkedPageShortcutIcon,
   McpIcon,
+  MenuIcons,
   MoreIcon,
   PageIcon,
   PlusIcon,
@@ -25,7 +26,7 @@ import {
 import { openSearch, toggleFavorite, useFavorites } from '../prefs';
 import { Confirm } from './Confirm';
 import { McpDialog } from './McpDialog';
-import { RowMenu } from './RowMenu';
+import { type MenuItem, RowMenu } from './RowMenu';
 
 const OPEN_KEY = 'aenotes.sidebar.expanded';
 const FOLDED_KEY = 'aenotes.sidebar.folded';
@@ -397,27 +398,22 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           </button>
           {cat.canWrite && (
             <span className="sb-actions">
-              <RowMenu
-                label="Add to folder"
-                glyph={<PlusIcon />}
-                items={[
-                  ['New page', () => void createDoc('page', f.id)],
-                  ['New board', () => void createDoc('edgeless', f.id)],
-                  [
-                    'New folder',
-                    () => {
-                      toggle(at.node, true);
-                      setNewFolderIn(f.id);
-                    },
-                  ],
-                ]}
-              />
+              <AddButton label={`New page in ${f.name}`} onClick={() => void createDoc('page', f.id)} />
               <RowMenu
                 label="Folder actions"
                 glyph={<MoreIcon />}
                 items={[
-                  ['Rename', () => setRenaming(f.id)],
-                  ['Delete', () => void cat.deleteFolder(f.id).catch(() => {})],
+                  ['Rename', () => setRenaming(f.id), <MenuIcons.rename key="i" />],
+                  [
+                    'Create a subfolder',
+                    () => {
+                      toggle(at.node, true);
+                      setNewFolderIn(f.id);
+                    },
+                    <MenuIcons.folder key="i" />,
+                  ],
+                  ['New board', () => void createDoc('edgeless', f.id), <MenuIcons.board key="i" />],
+                  ['Delete', () => void cat.deleteFolder(f.id).catch(() => {}), <MenuIcons.trash key="i" />],
                 ]}
               />
             </span>
@@ -457,7 +453,14 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     // A shortcut to a document the row is inside (its parent, or further up)
     // cannot become the original: the document would go inside itself.
     const canBeOriginal = !!from && from !== d.id && !isInside(docs, from, d.id);
-    const items: Array<[string, () => void]> = shortcut
+    const isFavorite = favorites.includes(d.id);
+    const favoriteItem: MenuItem = [
+      isFavorite ? 'Remove from favorites' : 'Add to favorites',
+      () => toggleFavorite(d.id),
+      isFavorite ? <MenuIcons.favorited key="i" /> : <MenuIcons.favorite key="i" />,
+    ];
+    // What a reader may do comes first: the rest is cut for read-only.
+    const items: MenuItem[] = shortcut
       ? [
           [
             'Go to original',
@@ -467,9 +470,17 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
               cat.setTrail(null);
               navigate(`/b/${d.id}`);
             },
+            <MenuIcons.original key="i" />,
           ],
+          favoriteItem,
           ...(canBeOriginal
-            ? [['Make this the original', () => from && void cat.makeOriginal(d.id, from).catch(() => {})] as [string, () => void]]
+            ? [
+                [
+                  'Make this the original',
+                  () => from && void cat.makeOriginal(d.id, from).catch(() => {}),
+                  <MenuIcons.page key="i" />,
+                ] as MenuItem,
+              ]
             : []),
           [
             'Make a separate copy',
@@ -479,11 +490,16 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
                 .copyShortcut(d.id, from)
                 .then(b => navigate(`/b/${b.id}`))
                 .catch(() => {}),
+            <MenuIcons.copy key="i" />,
           ],
-          ['Remove shortcut', () => from && void cat.removeShortcut(d.id, from).catch(() => {})],
+          ['Remove shortcut', () => from && void cat.removeShortcut(d.id, from).catch(() => {}), <MenuIcons.unlink key="i" />],
         ]
-      : [['Move to trash', () => setTrashing(d)]];
-    items.splice(shortcut ? 1 : 0, 0, [favorites.includes(d.id) ? 'Remove from favorites' : 'Add to favorites', () => toggleFavorite(d.id)]);
+      : [
+          favoriteItem,
+          ['New board inside', () => void createChild('edgeless', d.id, at.node), <MenuIcons.board key="i" />],
+          ['Move to trash', () => setTrashing(d), <MenuIcons.trash key="i" />],
+        ];
+    const readable = shortcut ? 2 : 1;
     return (
       <div key={at.node} className="sb-node">
         <div
@@ -517,19 +533,12 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           {(cat.canWrite || !shortcut) && (
             <span className="sb-actions">
               {!shortcut && cat.canWrite && (
-                <RowMenu
-                  label="Add inside"
-                  glyph={<PlusIcon />}
-                  items={[
-                    ['New page inside', () => void createChild('page', d.id, at.node)],
-                    ['New board inside', () => void createChild('edgeless', d.id, at.node)],
-                  ]}
-                />
+                <AddButton label={`New page in ${label}`} onClick={() => void createChild('page', d.id, at.node)} />
               )}
               <RowMenu
                 label={shortcut ? 'Shortcut actions' : 'Document actions'}
                 glyph={<MoreIcon />}
-                items={cat.canWrite ? items : items.slice(0, 1)}
+                items={cat.canWrite ? items : items.slice(0, readable)}
               />
             </span>
           )}
@@ -597,15 +606,17 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
         {section(
           'Organize',
           cat.canWrite && (
-            <RowMenu
-              label="Add"
-              glyph={<PlusIcon />}
-              items={[
-                ['New page', () => void createDoc('page', '')],
-                ['New board', () => void createDoc('edgeless', '')],
-                ['New folder', () => setNewFolderIn('')],
-              ]}
-            />
+            <span className="sb-section-actions">
+              <AddButton label="New page" onClick={() => void createDoc('page', '')} />
+              <RowMenu
+                label="More to add"
+                glyph={<MoreIcon />}
+                items={[
+                  ['New board', () => void createDoc('edgeless', ''), <MenuIcons.board key="i" />],
+                  ['New folder', () => setNewFolderIn(''), <MenuIcons.folder key="i" />],
+                ]}
+              />
+            </span>
           ),
         )}
         {!folded.has('Organize') && (
@@ -746,4 +757,23 @@ function homeNodes(path: Crumb[], doc: string): string[] {
   }
   out.push(node ? `${node}/${doc}` : `${folder ? `f:${folder}` : ''}/d:${doc}`);
   return out;
+}
+
+/** AddButton is a row's "+": a new Untitled page right there. */
+function AddButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="sb-icon-button"
+      aria-label={label}
+      title={label}
+      onClick={e => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      <PlusIcon />
+    </button>
+  );
 }
