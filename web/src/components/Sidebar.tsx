@@ -297,6 +297,7 @@ export function Sidebar({ route }: { route: Route }) {
     <aside className="sidebar" aria-label="Pages and boards">
       <div className="sb-head">
         <a className="sb-home" href="/" onClick={go('/')} {...drop('')}>
+          <img className="sb-logo" src="/icon-192.png" alt="" width={22} height={22} />
           aenotes
         </a>
         {cat.canWrite && (
@@ -445,15 +446,19 @@ export function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () 
 
 const SIDEBAR_KEY = 'aenotes.sidebar';
 
-/** useSidebar is the sidebar's open state, hidden unless the visitor opened
- *  it in this browser before. */
+/** useSidebar is the sidebar's open state, kept in the browser: open unless
+ *  the visitor hid it here — or, on a narrow screen where it would cover the
+ *  page, hidden unless they opened it. */
 export function useSidebar(): [boolean, () => void] {
   const [open, setOpen] = useState(() => {
+    let saved: string | null = null;
     try {
-      return localStorage.getItem(SIDEBAR_KEY) === 'open';
+      saved = localStorage.getItem(SIDEBAR_KEY);
     } catch {
-      return false;
+      /* storage blocked */
     }
+    if (saved === 'open' || saved === 'closed') return saved === 'open';
+    return !window.matchMedia('(max-width: 640px)').matches;
   });
   const toggle = () =>
     setOpen(o => {

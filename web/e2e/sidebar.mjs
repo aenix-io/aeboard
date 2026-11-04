@@ -1,5 +1,5 @@
-// The sidebar: hidden by default, toggled from the header and remembered by
-// the browser; the tree; "+" creates a page in a folder and opens it; drag
+// The sidebar: open by default (on a wide screen), toggled from the header
+// and remembered by the browser; the tree; "+" creates a page in a folder and opens it; drag
 // and drop within the tree and back to the top level.
 // usage: node e2e/sidebar.mjs <baseURL> <outDir>
 import { chromium } from '@playwright/test';
@@ -18,12 +18,13 @@ const p = await (await browser.newContext({ viewport: { width: 1280, height: 800
 p.on('pageerror', e => console.log('pageerror', e.message));
 await p.goto(base + '/');
 await p.waitForSelector('.board-card');
-console.log('hidden by default:', (await p.locator('.sidebar').count()) === 0);
-await p.getByRole('button', { name: 'Show sidebar' }).click();
-await p.waitForSelector('.sidebar');
+console.log('open by default:', (await p.locator('.sidebar').count()) === 1);
+await p.getByRole('button', { name: 'Hide sidebar' }).click();
 await p.reload();
 await p.waitForSelector('.board-card');
-console.log('still open after reload:', (await p.locator('.sidebar').count()) === 1);
+console.log('hidden stays hidden after a reload:', (await p.locator('.sidebar').count()) === 0);
+await p.getByRole('button', { name: 'Show sidebar' }).click();
+await p.waitForSelector('.sidebar');
 
 // Expand Work: its page shows.
 await p.getByRole('button', { name: 'Expand Work' }).click();
