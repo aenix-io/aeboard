@@ -20,7 +20,8 @@ function keepDist(): Plugin {
 // paste from a slice with no blocks and throws on content[0], which leaves
 // the editor without a working cursor. Upstream AFFiNE has since guarded
 // it the same way; drop this with the upgrade. A missing pattern fails the
-// build rather than shipping the bug unnoticed.
+// build rather than shipping the bug unnoticed. (Only the build is patched:
+// `vite dev` prebundles BlockSuite with esbuild, past the plugin.)
 function fixPasteMiddleware(): Plugin {
   // The package resolves to its TypeScript sources here, its dist elsewhere.
   const file = /@blocksuite\/affine-shared\/(src|dist)\/adapters\/middlewares\/paste\.(ts|js)$/;
@@ -42,8 +43,7 @@ export default defineConfig({
   plugins: [react(), vanillaExtractPlugin(), keepDist(), fixPasteMiddleware()],
   build: { outDir: 'dist', emptyOutDir: true, target: 'es2022' },
   esbuild: { target: 'es2022' },
-  // affine-shared is not prebundled in dev, so the paste fix applies there too.
-  optimizeDeps: { esbuildOptions: { target: 'es2022' }, exclude: ['@blocksuite/affine-shared'] },
+  optimizeDeps: { esbuildOptions: { target: 'es2022' } },
   server: {
     port: 5174,
     proxy: { '/api': { target: 'http://127.0.0.1:8766', ws: true } },
