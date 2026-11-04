@@ -50,13 +50,17 @@ A page created from the `@` menu is built by BlockSuite in the creating browser 
 Each board is a directory, identical in the plain-file and the git backend:
 
 ```
-boards/<id>/board.json   mode, title, folder, created/updated
+boards/<id>/board.json   mode, title, folder, created/updated, trashed/deleted
 folders.json             the folder tree
 boards/<id>/state.jsonl  the Yjs state as text — the source of truth
 boards/<id>/doc.json     the "blocks" map as sorted, indented JSON — for people and diffs, never read back
 ```
 
 **Folders** are metadata, not directories. The tree is one `folders.json` at the repository root (id, name, parent), and each document names its folder in `board.json`. Documents stay in the flat `boards/<id>/`, so moving a document or a whole folder is a one-line change, and links between documents never break. Only an empty folder can be deleted, and it stays in the file as a tombstone, so a merge with a replica that still has it cannot bring it back. Replicas merge the tree folder by folder, and the copy changed last wins. A document that one replica moved into a folder another replica deleted shows at the top level.
+
+**Documents nest by linking**, the AFFiNE way: a document's children are the documents its body links to, in the order of the links (references in text and linked or synced doc cards). Nothing about it is stored apart from the documents themselves: the server derives each document's links from its state whenever it changes and lists them in the catalog. Putting a document inside another one adds a line with a reference to it at the end of the parent's body. In the sidebar, a top-level document that another document links to shows only inside that one; a cycle nobody else links into keeps one member at the top.
+
+**The trash** is a flag on `board.json` (`trashed`): a trashed document is kept whole, leaves the tree and the lists, and can be restored. Deleting from the trash leaves a tombstone (`deleted`, no state files), so a replica that still has the document learns it is gone; an edit made after the deletion on another replica wins over it, the way the later metadata wins everywhere else. Links to a deleted document in other documents are left as they are.
 
 **Why the state is a Yjs log, not just JSON.** Yjs tells edits apart by their item ids (client, clock) and the neighbours each item was inserted between; that is what lets a reconnecting browser re-send its state, or two replicas merge, without duplicating anything. A board rebuilt from plain JSON would get fresh ids every time. So the source of truth keeps the ids — but as text, not binary: `internal/ytext` writes the Yjs V1 update as JSON lines, one per item (`{"id":[client,clock],"left":…,"parent":…,"key":…,"string":"…"}`) and one per client of deleted ranges, and reads it back to the identical bytes (values keep their wire type, objects their key order). Every write checks that round trip before anything is stored. The text is about three times the binary size; git compresses it, and the diffs show which items a commit added or deleted. Boards stored before this as `state.bin` are still read and converted by their next write.
 

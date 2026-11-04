@@ -5,8 +5,10 @@ A collaborative whiteboard and pages in one Go binary. The board editor is [Bloc
 - Shapes, connectors, text, pen, mind maps, frames, AFFiNE's board templates and stickers.
 - Live collaboration: edits, cursors and selections of everyone on the board.
 - Pages next to boards: rich text documents, linked with `@`, embedded in each other (as a card or inline), every document viewable as a board or as a page.
-- Pages and boards in folders, browsed like files: breadcrumbs, drag and drop between folders, Move to…, search across every folder, an All / Pages / Boards switch.
-- A Notion-style sidebar with the whole tree (hidden until opened from the header; the browser remembers it): expand folders in place, create pages, boards and folders anywhere, drag to move.
+- Documents inside documents, as in AFFiNE: a document's children are the documents its body links to (@-mentions and linked-doc cards). "+" on a document creates a page or board inside it, and dropping a document on another one puts it inside; both add a link at the end of the parent's body.
+- A sidebar with the whole tree (the browser remembers whether it is open): folders that expand and collapse, documents that expand to their children, drag to order and move.
+- A start page listing every document, with search and an All / Pages / Boards switch.
+- A trash: a deleted document is kept and can be restored, or deleted for good from the trash.
 - Boards in git: each board is its Yjs state plus a readable JSON dump, committed and pushed in the background; diverged replicas merge without conflicts.
 
 ## Run locally
@@ -70,7 +72,7 @@ Secrets are read from the environment only, so they stay out of `ps`. `GET /api/
 
 ## MCP
 
-AI agents read and edit pages, boards and folders through MCP: the server speaks the streamable HTTP transport at `<base>/mcp` (locally `http://127.0.0.1:8766/mcp`).
+AI agents read and edit pages, boards and folders through MCP: list the tree, search, read a document as Markdown, create documents (inside a folder or another document) and append Markdown to them, rename and move them, move them to the trash and back, manage folders. The sidebar's MCP button shows the commands below for the server it runs on. The server speaks the streamable HTTP transport at `<base>/mcp` (locally `http://127.0.0.1:8766/mcp`).
 
 ```sh
 claude mcp add --transport http aenotes https://notes.example.com/mcp
