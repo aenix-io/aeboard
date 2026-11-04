@@ -6,7 +6,9 @@ import { BoardList } from './components/BoardList';
 import { BoardPage } from './components/BoardPage';
 import { NoAccess, SignIn } from './components/SignIn';
 import { Sidebar, SidebarToggle, useSidebar } from './components/Sidebar';
+import { SearchDialog } from './components/SearchDialog';
 import { TrashList } from './components/TrashList';
+import { onOpenSearch } from './prefs';
 import { SyncBadge } from './components/SyncBadge';
 import { WhoAmI } from './components/WhoAmI';
 import { CatalogProvider } from './catalog';
@@ -59,6 +61,21 @@ function Boards({
   // The status stream is behind the sign-in, so it only starts here.
   const sync = useSyncStatus();
   const [sidebar, toggleSidebar] = useSidebar();
+  const [searching, setSearching] = useState(false);
+  const closeSearch = useCallback(() => setSearching(false), []);
+  useEffect(() => onOpenSearch(() => setSearching(true)), []);
+  // ⌘K / Ctrl+K opens the finder, unless the editor took it (with text
+  // selected it makes a link).
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k' && !e.defaultPrevented) {
+        e.preventDefault();
+        setSearching(true);
+      }
+    };
+    window.addEventListener('keydown', on);
+    return () => window.removeEventListener('keydown', on);
+  }, []);
   const lead = <SidebarToggle open={sidebar} onToggle={toggleSidebar} />;
   const userName = me?.login ?? name;
   const canWrite = !me || me.access === 'write';
@@ -98,6 +115,7 @@ function Boards({
           )}
         </main>
       </div>
+      {searching && <SearchDialog onClose={closeSearch} />}
     </CatalogProvider>
   );
 }

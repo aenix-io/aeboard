@@ -6,11 +6,31 @@ import { atFolderLevel, type Crumb, type Entry, entriesOf, homePath, inside, isI
 import { navigate, type Route } from '../router';
 import { type Container, type Drop, levelAt, resolveDrop, type RowCtx, type Zone } from '../tree';
 import { untitled } from './BoardPage';
-import { BoardIcon, FolderIcon, McpIcon, PageIcon, ShortcutBadge, TrashIcon } from './icons';
+import { BoardIcon, DocsIcon, FolderIcon, McpIcon, PageIcon, SearchIcon, ShortcutBadge, TrashIcon } from './icons';
+import { openSearch, toggleFavorite, useFavorites } from '../prefs';
 import { Confirm } from './Confirm';
 import { McpDialog } from './McpDialog';
+import { RowMenu } from './RowMenu';
 
 const OPEN_KEY = 'aenotes.sidebar.expanded';
+const FOLDED_KEY = 'aenotes.sidebar.folded';
+
+function loadSet(key: string): Set<string> {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) ?? '[]');
+    return new Set(Array.isArray(v) ? (v as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSet(key: string, s: Set<string>) {
+  try {
+    localStorage.setItem(key, JSON.stringify([...s]));
+  } catch {
+    /* storage blocked */
+  }
+}
 
 function loadExpanded(): Set<string> {
   try {
@@ -50,6 +70,16 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   // The folder an inline "new folder" field is open in, or null.
   const [newFolderIn, setNewFolderIn] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const favorites = useFavorites();
+  // The sidebar's sections, folded or not (remembered in the browser).
+  const [folded, setFolded] = useState<Set<string>>(() => loadSet(FOLDED_KEY));
+  const fold = (name: string) => {
+    const next = new Set(folded);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    setFolded(next);
+    saveSet(FOLDED_KEY, next);
+  };
   // The document a "move to trash" confirmation is open for.
   const [trashing, setTrashing] = useState<Board | null>(null);
 
@@ -312,7 +342,9 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       aria-expanded={open}
       onClick={onClick}
     >
-      {open ? '▼' : '▶'}
+      <svg className={`sb-chevron${open ? ' sb-chevron-open' : ''}`} width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
     </button>
   );
 
@@ -403,15 +435,20 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   // docRow is a document in its own place and, expanded, what is inside it:
   // the documents living there, then shortcuts. A shortcut row (a link to a
   // document living elsewhere) has an arrow and does not expand.
-  const docRow = (d: Board, at: Place, shortcut = false) => {
+  const docRow = (d: Board, at: Place, shortcut = false, fav = false) => {
     const kids = shortcut ? [] : rowsIn(d);
     const open = kids.length > 0 && expanded.has(at.node);
     const label = d.title || untitled(d.mode);
     const from = at.container.kind === 'doc' ? at.container.id : undefined;
     const row: RowCtx = { kind: 'doc', id: d.id, node: at.node, container: at.container, depth: at.depth, last: at.last, open, up: at.up };
+    // A shortcut to a document the row is inside (its parent, or further up)
+    // cannot become the original: the document would go inside itself.
+    const canBeOriginal = !!from && from !== d.id && !isInside(docs, from, d.id);
     const items: Array<[string, () => void]> = shortcut
       ? [
-          ['Make this the original', () => from && void cat.makeOriginal(d.id, from).catch(() => {})],
+          ...(canBeOriginal
+            ? [['Make this the original', () => from && void cat.makeOriginal(d.id, from).catch(() => {})] as [string, () => void]]
+            : []),
           [
             'Make a separate copy',
             () =>
@@ -424,6 +461,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           ['Remove shortcut', () => from && void cat.removeShortcut(d.id, from).catch(() => {})],
         ]
       : [['Move to trash', () => setTrashing(d)]];
+    items.unshift([favorites.includes(d.id) ? 'Remove from favorites' : 'Add to favorites', () => toggleFavorite(d.id)]);
     return (
       <div key={at.node} className="sb-node">
         <div
@@ -431,7 +469,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           style={{ paddingLeft: indent(at.depth) }}
           title={shortcut ? `Shortcut to ${label}` : undefined}
           {...drag({ kind: 'doc', id: d.id, from, shortcut })}
-          {...rowDrop(row, !shortcut)}
+          {...(fav ? {} : rowDrop(row, !shortcut))}
         >
           {dropLine(row)}
           {kids.length > 0 ? caret(open, label, () => toggle(at.node)) : <span className="sb-caret sb-caret-none" />}
@@ -449,9 +487,9 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
             </span>
             <span className={`sb-name${d.title ? '' : ' sb-untitled'}`}>{label}</span>
           </a>
-          {cat.canWrite && (
+          {(cat.canWrite || !shortcut) && (
             <span className="sb-actions">
-              {!shortcut && (
+              {!shortcut && cat.canWrite && (
                 <RowMenu
                   label="Add inside"
                   glyph="+"
@@ -461,7 +499,11 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
                   ]}
                 />
               )}
-              <RowMenu label={shortcut ? 'Shortcut actions' : 'Document actions'} glyph="⋯" items={items} />
+              <RowMenu
+                label={shortcut ? 'Shortcut actions' : 'Document actions'}
+                glyph="⋯"
+                items={cat.canWrite ? items : items.slice(0, 1)}
+              />
             </span>
           )}
         </div>
@@ -483,45 +525,84 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     );
   };
 
+  const favDocs = favorites.flatMap(id => docs.filter(d => d.id === id));
+  const section = (name: string, extra?: ReactNode) => (
+    <div className="sb-section">
+      <button type="button" className="sb-section-title" aria-expanded={!folded.has(name)} onClick={() => fold(name)}>
+        {name}
+        <svg className={`sb-chevron${folded.has(name) ? '' : ' sb-chevron-open'}`} width="10" height="10" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {extra}
+    </div>
+  );
+
   return (
     <aside className="sidebar" aria-label="Pages and boards">
       <div className="sb-head">
-        <a className="sb-home" href="/" onClick={go('/')} {...drop('')}>
+        <a className="sb-home" href="/" onClick={go('/')}>
           <img className="sb-logo" src="/icon-192.png" alt="" width={22} height={22} />
           aenotes
         </a>
-        {cat.canWrite && (
-          <RowMenu
-            label="Add"
-            glyph="+"
-            items={[
-              ['New page', () => void createDoc('page', '')],
-              ['New board', () => void createDoc('edgeless', '')],
-              ['New folder', () => setNewFolderIn('')],
-            ]}
-          />
+      </div>
+      <nav className="sb-nav">
+        <button type="button" className="sb-nav-item" onClick={openSearch}>
+          <SearchIcon />
+          Search
+          <kbd className="sb-kbd">⌘K</kbd>
+        </button>
+        <a className={`sb-nav-item${route.name === 'list' ? ' sb-active' : ''}`} href="/" onClick={go('/')}>
+          <DocsIcon />
+          All documents
+        </a>
+      </nav>
+      <div className="sb-tree">
+        {section('Favorites')}
+        {!folded.has('Favorites') &&
+          (favDocs.length === 0 ? (
+            <div className="sb-empty sb-empty-section">No favorites yet: add them from a document's ⋯ menu.</div>
+          ) : (
+            favDocs.map((d, i) =>
+              docRow(d, { node: `fav/d:${d.id}`, container: { kind: 'folder', id: '' }, depth: 0, last: i === favDocs.length - 1, up: [] }, false, true),
+            )
+          ))}
+        {section(
+          'Organize',
+          cat.canWrite && (
+            <RowMenu
+              label="Add"
+              glyph="+"
+              items={[
+                ['New page', () => void createDoc('page', '')],
+                ['New board', () => void createDoc('edgeless', '')],
+                ['New folder', () => setNewFolderIn('')],
+              ]}
+            />
+          ),
+        )}
+        {!folded.has('Organize') && (
+          <>
+            {cat.docs === null ? <div className="sb-empty">Loading…</div> : renderLevel('', 0, [])}
+            {/* The space below the tree takes drops to the top level. */}
+            <div className="sb-rest" {...drop('')} />
+          </>
+        )}
+        {section('Others')}
+        {!folded.has('Others') && (
+          <>
+            <a className={`sb-nav-item${route.name === 'trash' ? ' sb-active' : ''}`} href="/trash" onClick={go('/trash')}>
+              <TrashIcon />
+              Trash
+            </a>
+            <button type="button" className="sb-nav-item" onClick={() => setMcpOpen(true)}>
+              <McpIcon />
+              Connect an agent (MCP)
+            </button>
+          </>
         )}
       </div>
-      <div className="sb-tree">
-        {cat.docs === null ? <div className="sb-empty">Loading…</div> : renderLevel('', 0, [])}
-        {/* The space below the tree takes drops to the top level. */}
-        <div className="sb-rest" {...drop('')} />
-      </div>
       {cat.error && <div className="sb-error error">{cat.error}</div>}
-      <div className="sb-foot">
-        <a
-          className={`sb-foot-button${route.name === 'trash' ? ' sb-active' : ''}`}
-          href="/trash"
-          onClick={go('/trash')}
-        >
-          <TrashIcon />
-          Trash
-        </a>
-        <button type="button" className="sb-foot-button" onClick={() => setMcpOpen(true)}>
-          <McpIcon />
-          MCP
-        </button>
-      </div>
       {mcpOpen && <McpDialog hosted={hosted} onClose={closeMcp} />}
       {trashing && (
         <Confirm
@@ -543,72 +624,6 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
 
 const indent = (depth: number) => 8 + depth * 14;
 
-
-/** RowMenu is a row's small hover button with a dropdown. The list is fixed
- *  to the window (the tree scrolls and would clip it) and closes on a click
- *  elsewhere, Escape or a choice — not when the pointer wanders off, which
- *  would close it on the way from the button to the list. */
-function RowMenu({ label, glyph, items }: { label: string; glyph: string; items: Array<[string, () => void]> }) {
-  const [at, setAt] = useState<{ top: number; left: number } | null>(null);
-  const root = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!at) return;
-    const close = (e: Event) => {
-      if (e instanceof KeyboardEvent && e.key !== 'Escape') return;
-      if (e instanceof PointerEvent && root.current?.contains(e.target as Node)) return;
-      setAt(null);
-    };
-    document.addEventListener('pointerdown', close, true);
-    document.addEventListener('keydown', close);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('pointerdown', close, true);
-      document.removeEventListener('keydown', close);
-      window.removeEventListener('resize', close);
-    };
-  }, [at]);
-  return (
-    <span className="sb-menu" ref={root}>
-      <button
-        type="button"
-        className="sb-icon-button"
-        aria-label={label}
-        title={label}
-        aria-expanded={at !== null}
-        onClick={e => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (at) {
-            setAt(null);
-            return;
-          }
-          const r = e.currentTarget.getBoundingClientRect();
-          setAt({ top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 180) });
-        }}
-      >
-        {glyph}
-      </button>
-      {at && (
-        <span className="item-menu-list sb-menu-list" role="menu" style={{ position: 'fixed', top: at.top, left: at.left }}>
-          {items.map(([text, run]) => (
-            <button
-              key={text}
-              type="button"
-              role="menuitem"
-              onClick={e => {
-                e.stopPropagation();
-                setAt(null);
-                run();
-              }}
-            >
-              {text}
-            </button>
-          ))}
-        </span>
-      )}
-    </span>
-  );
-}
 
 function NameRow({
   depth,

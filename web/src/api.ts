@@ -98,6 +98,9 @@ export const api = {
     throw new Error(msg);
   },
   listBoards: () => call<BoardList>('GET', '/boards'),
+  /** search finds documents by title and text. */
+  search: (q: string) =>
+    call<{ hits: Array<{ id: string; snippet?: string }> }>('GET', `/search?q=${encodeURIComponent(q)}`),
   getBoard: (id: string) => call<Board>('GET', `/boards/${id}`),
   createBoard: (doc: {
     id?: string;
@@ -108,7 +111,10 @@ export const api = {
     blank?: boolean;
   }) =>
     call<Board>('POST', '/boards', doc),
-  updateBoard: (id: string, patch: { title?: string; folder?: string; parent?: string; rank?: string; trashed?: boolean }) =>
+  updateBoard: (
+    id: string,
+    patch: { title?: string; folder?: string; parent?: string; rank?: string; trashed?: boolean; mode?: 'edgeless' | 'page' },
+  ) =>
     call<Board>('PATCH', `/boards/${id}`, patch),
   /** copyBoard makes a separate copy of doc inside into, in place of the
    *  shortcut to it there. */

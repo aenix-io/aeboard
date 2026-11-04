@@ -6,6 +6,9 @@ import { useCatalog } from '../catalog';
 import { api, type Board } from '../api';
 import { homePath } from '../library';
 import { navigate } from '../router';
+import { noteOpened, toggleFavorite, useFavorites } from '../prefs';
+import { StarIcon } from './icons';
+import { RowMenu } from './RowMenu';
 import { Confirm } from './Confirm';
 
 interface Props {
@@ -79,6 +82,52 @@ function ToOriginal({ id }: { id: string }) {
   );
 }
 
+/** DocActions are the header's star (favorites, this browser's) and "⋯"
+ *  menu: the mode the document opens in by default, and the trash. */
+function DocActions({
+  id,
+  canWrite,
+  fallbackMode,
+  onTrash,
+}: {
+  id: string;
+  canWrite: boolean;
+  fallbackMode: 'edgeless' | 'page';
+  onTrash: () => void;
+}) {
+  const cat = useCatalog();
+  const favorite = useFavorites().includes(id);
+  const doc = cat.docs?.find(d => d.id === id);
+  const mode = doc?.mode ?? fallbackMode;
+  const other = mode === 'page' ? 'edgeless' : 'page';
+  const items: Array<[string, () => void]> = [];
+  if (canWrite && doc && !doc.trashed) {
+    items.push([
+      `Default to ${other === 'page' ? 'Page' : 'Board'} mode`,
+      () => {
+        cat.patchDoc(id, { mode: other });
+        void api.updateBoard(id, { mode: other }).then(cat.reload, () => cat.reload());
+      },
+    ]);
+    items.push(['Move to trash', onTrash]);
+  }
+  return (
+    <span className="doc-actions">
+      <button
+        type="button"
+        className={`icon-button${favorite ? ' icon-button-on' : ''}`}
+        aria-pressed={favorite}
+        aria-label={favorite ? 'Remove from favorites' : 'Add to favorites'}
+        title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+        onClick={() => toggleFavorite(id)}
+      >
+        <StarIcon on={favorite} />
+      </button>
+      {items.length > 0 && <RowMenu label="Document actions" glyph="⋯" items={items} />}
+    </span>
+  );
+}
+
 /** BoardPage is one document — a board or a page: a slim header (the
  *  title and the Board/Page switch, as AFFiNE's) over the editor. */
 export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
@@ -90,6 +139,8 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
   const [title, setTitle] = useState('');
   const mount = useRef<HTMLDivElement>(null);
   const [deleting, setDeleting] = useState(false);
+  const [trashing, setTrashing] = useState(false);
+  useEffect(() => noteOpened(id), [id]);
   // In the trash: AFFiNE keeps such a document readable, with a way back.
   const trashed = cat.trash.some(d => d.id === id);
 
@@ -230,8 +281,22 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
             ))}
           </div>
         )}
+        {board && <DocActions id={id} canWrite={canWrite} fallbackMode={board.mode} onTrash={() => setTrashing(true)} />}
         {whoami}
       </header>
+      {trashing && (
+        <Confirm
+          title="Move to trash?"
+          body={`${title || untitled(board?.mode ?? 'page')} will be moved to the trash. You can restore it from there.`}
+          action="Move to trash"
+          danger
+          onCancel={() => setTrashing(false)}
+          onConfirm={() => {
+            setTrashing(false);
+            void cat.trashDoc(id).catch(() => {});
+          }}
+        />
+      )}
       {trashed && (
         <div className="trash-banner" role="status">
           This document is in the trash.

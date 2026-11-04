@@ -257,8 +257,10 @@ button.danger { color: #fff; background: var(--danger); border-color: var(--dang
 .trash-banner .spacer { flex: 1; }
 a.sb-foot-button { text-decoration: none; }
 
-/* the tree's carets (filled, as aeman's roadmap) and shortcuts */
-.sb-caret { font-size: 9px; color: var(--muted); }
+/* the tree's carets (chevrons, as aeman's) and shortcuts */
+.sb-caret { display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.sb-chevron { transition: transform 0.12s ease; }
+.sb-chevron-open { transform: rotate(90deg); }
 .sb-caret:hover { color: var(--fg); }
 .sidebar .kind { position: relative; display: inline-flex; }
 .shortcut-badge { position: absolute; right: -4px; bottom: -3px; color: var(--accent); }
@@ -280,3 +282,34 @@ a.sb-foot-button { text-decoration: none; }
 .doc-crumbs + .title-static { margin-left: -12px; padding-left: 4px; }
 /* "Go to original" follows the title a space away. */
 .app .title-input + .to-original, .title-static + .to-original { margin-left: -16px; }
+
+/* the quick finder (Search, ⌘K) */
+.search-scrim { align-items: flex-start; padding-top: 12vh; }
+.search-dialog { background: var(--bg); border-radius: 12px; width: min(640px, calc(100vw - 32px)); max-height: 70vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(27, 31, 36, 0.25); overflow: hidden; }
+.app .search-input { border: none; border-bottom: 1px solid var(--line-soft); border-radius: 0; padding: 16px 18px; font-size: 16px; outline: none; }
+.app .search-input:focus { outline: none; }
+.search-results { overflow: auto; padding: 6px; }
+.search-section-title { font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 12px 4px; }
+.search-item { width: 100%; display: flex; align-items: center; gap: 10px; border: none; background: none; padding: 8px 12px; border-radius: 8px; text-align: left; font-size: 14px; }
+.search-item[data-active='true'] { background: var(--bg-soft); }
+.search-icon { flex: none; width: 16px; display: inline-flex; justify-content: center; color: var(--muted); }
+.search-label { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-note { flex: 1; min-width: 0; text-align: right; color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-empty { color: var(--muted); padding: 8px 12px; margin: 0; }
+
+/* the sidebar's fixed entries and sections, after AFFiNE's */
+.sb-nav { display: flex; flex-direction: column; padding: 0 4px 6px; }
+.sb-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: none; padding: 5px 10px; border-radius: 5px; color: var(--fg); font-size: 13px; text-decoration: none; text-align: left; cursor: pointer; }
+.sb-nav-item:hover { background: rgba(55, 53, 47, 0.06); }
+.sb-nav-item svg { color: var(--muted); flex: none; }
+.sb-kbd { margin-left: auto; font: 11px/1 inherit; color: var(--faint); border: 1px solid var(--line-soft); border-radius: 4px; padding: 2px 4px; }
+.sb-section { display: flex; align-items: center; justify-content: space-between; padding: 12px 6px 2px 8px; }
+.sb-section-title { display: inline-flex; align-items: center; gap: 4px; border: none; background: none; padding: 2px 2px; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.sb-section-title:hover { color: var(--fg); }
+.sb-empty-section { padding: 4px 12px 6px; }
+.sb-rest { flex: none; min-height: 24px; }
+.doc-actions { display: inline-flex; align-items: center; gap: 2px; }
+.icon-button { border: none; background: none; padding: 4px; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; color: var(--muted); border-radius: 6px; }
+.icon-button:hover { background: var(--bg-soft); color: var(--fg); }
+.icon-button-on { color: #d4a72c; }
+.doc-actions .sb-icon-button { width: 28px; height: 28px; font-size: 16px; }
