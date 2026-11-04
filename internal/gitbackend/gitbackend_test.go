@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -271,6 +272,30 @@ func TestFolderTreesMerge(t *testing.T) {
 		}
 		if len(got) != 3 || !got["From A"] || !got["From B"] || !got[name] {
 			t.Fatalf("%s folders = %v", label, got)
+		}
+	}
+}
+
+// A tombstone wins over an older copy and loses to a later edit.
+func TestMergeBoardTombstone(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	live := boards.Snapshot{Meta: boards.Meta{ID: "abcdefghjk", Updated: t0}, State: []byte{1}}
+	gone := boards.Snapshot{Meta: boards.Meta{ID: "abcdefghjk", Updated: t0.Add(time.Hour), Deleted: true}}
+	later := boards.Snapshot{Meta: boards.Meta{ID: "abcdefghjk", Updated: t0.Add(2 * time.Hour)}, State: []byte{2}}
+	for name, c := range map[string]struct {
+		ours, theirs boards.Snapshot
+		deleted      bool
+	}{
+		"theirs deleted later": {live, gone, true},
+		"ours deleted later":   {gone, live, true},
+		"edited after delete":  {gone, later, false},
+	} {
+		got, err := mergeBoard(c.ours, c.theirs, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Meta.Deleted != c.deleted || (c.deleted && got.State != nil) || (!c.deleted && len(got.State) == 0) {
+			t.Errorf("%s: %+v", name, got)
 		}
 	}
 }

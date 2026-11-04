@@ -49,6 +49,13 @@ type Meta struct {
 	Rank    string    `json:"rank,omitempty"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
+	// Trashed is when the document was moved to the trash (zero: it is
+	// not). A trashed document is kept whole and can be restored.
+	Trashed time.Time `json:"trashed,omitzero"`
+	// Deleted marks a document deleted for good: only this metadata stays,
+	// as a tombstone, so a merge with a replica that still has the document
+	// does not bring it back.
+	Deleted bool `json:"deleted,omitempty"`
 }
 
 // Document modes.
@@ -89,6 +96,8 @@ type Patch struct {
 	Folder *string `json:"folder,omitempty"`
 	// Rank places it among its folder's contents.
 	Rank *string `json:"rank,omitempty"`
+	// Trashed moves the document to the trash (true) or restores it.
+	Trashed *bool `json:"trashed,omitempty"`
 }
 
 // Snapshot is one board as a backend stores it.
@@ -204,7 +213,9 @@ func (s *Store) List() []Meta {
 	defer s.mu.Unlock()
 	out := make([]Meta, 0, len(s.boards))
 	for _, b := range s.boards {
-		out = append(out, cloneMeta(b.meta))
+		if !b.meta.Deleted {
+			out = append(out, cloneMeta(b.meta))
+		}
 	}
 	slices.SortFunc(out, func(a, b Meta) int {
 		if c := b.Updated.Compare(a.Updated); c != 0 {
@@ -219,7 +230,7 @@ func (s *Store) List() []Meta {
 func (s *Store) Get(id string) (Meta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		return Meta{}, ErrNotFound
 	}
@@ -296,7 +307,7 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 // the document's live room must be sent.
 func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 	s.mu.Lock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		s.mu.Unlock()
 		return Meta{}, nil, ErrNotFound
@@ -333,6 +344,15 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 		}
 		m.Rank = *p.Rank
 	}
+	if p.Trashed != nil {
+		if *p.Trashed {
+			if m.Trashed.IsZero() {
+				m.Trashed = s.now().UTC()
+			}
+		} else {
+			m.Trashed = time.Time{}
+		}
+	}
 	if p.Folder != nil {
 		if !s.liveFolderLocked(*p.Folder) {
 			s.mu.Unlock()
@@ -355,7 +375,7 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 func (s *Store) LoadState(id string) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		return nil, ErrNotFound
 	}
@@ -371,7 +391,7 @@ func (s *Store) LoadState(id string) ([]byte, error) {
 // are the logins the change is attributed to.
 func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, error) {
 	s.mu.Lock()
-	b, ok := s.boards[id]
+	b, ok := s.liveLocked(id)
 	if !ok {
 		s.mu.Unlock()
 		return false, ErrNotFound
@@ -433,7 +453,23 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			s.catalogVersion++
 			continue
 		}
-		if r.Meta.Updated.After(b.meta.Updated) {
+		newer := r.Meta.Updated.After(b.meta.Updated)
+		switch {
+		case b.meta.Deleted && !newer:
+			// Deleted here after what the remote has: it stays deleted.
+			continue
+		case r.Meta.Deleted && newer:
+			// Deleted there after what we have.
+			b.meta = r.Meta
+			b.state = nil
+			b.links = nil
+			s.catalogVersion++
+			continue
+		case r.Meta.Deleted:
+			// A remote tombstone older than our edits: ours stands.
+			continue
+		}
+		if newer {
 			m := r.Meta
 			normMeta(&m)
 			b.meta = m
@@ -507,7 +543,7 @@ func (s *Store) Link(parent, child, actor string) ([]byte, error) {
 		return nil, err
 	}
 	s.mu.Lock()
-	b, ok := s.boards[parent]
+	b, ok := s.liveLocked(parent)
 	has := ok && slices.Contains(b.links, child)
 	s.mu.Unlock()
 	if !ok {
@@ -517,6 +553,44 @@ func (s *Store) Link(parent, child, actor string) ([]byte, error) {
 		return nil, nil
 	}
 	return s.Append(parent, []blocks.Spec{blocks.Reference(child)}, actor)
+}
+
+// ErrNotTrashed is returned for deleting a document for good that is not
+// in the trash.
+var ErrNotTrashed = errors.New("only a document in the trash can be deleted")
+
+// Delete removes a trashed document for good. What stays is a tombstone
+// (its metadata, marked deleted): replicas that still have the document
+// learn it is gone instead of bringing it back. Links to it in other
+// documents are left as they are.
+func (s *Store) Delete(id, actor string) error {
+	s.mu.Lock()
+	b, ok := s.liveLocked(id)
+	if !ok {
+		s.mu.Unlock()
+		return ErrNotFound
+	}
+	if b.meta.Trashed.IsZero() {
+		s.mu.Unlock()
+		return ErrNotTrashed
+	}
+	b.meta = Meta{ID: id, Mode: b.meta.Mode, Created: b.meta.Created, Updated: s.now().UTC(), Trashed: b.meta.Trashed, Deleted: true}
+	b.state = nil
+	b.links = nil
+	s.catalogVersion++
+	s.markLocked(b, actor)
+	s.mu.Unlock()
+	s.notify()
+	return nil
+}
+
+// liveLocked is a document that is there (not deleted for good).
+func (s *Store) liveLocked(id string) (*board, bool) {
+	b, ok := s.boards[id]
+	if !ok || b.meta.Deleted {
+		return nil, false
+	}
+	return b, true
 }
 
 // Links returns, per document, the documents it links to in order of

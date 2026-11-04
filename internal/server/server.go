@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
+	mux.HandleFunc("DELETE /api/v1/boards/{id}", s.deleteBoard)
 	mux.HandleFunc("POST /api/v1/boards/{id}/children", s.addChild)
 	mux.HandleFunc("POST /api/v1/folders", s.createFolder)
 	mux.HandleFunc("PATCH /api/v1/folders/{id}", s.patchFolder)
@@ -256,6 +257,16 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, m)
 }
 
+// deleteBoard deletes a trashed document for good (moving to the trash and
+// back is a PATCH of "trashed").
+func (s *Server) deleteBoard(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.Delete(r.PathValue("id"), s.login(r)); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // addChild puts a document inside another one (AFFiNE's "add linked doc"):
 // a link to it is added at the end of the parent's body.
 func (s *Server) addChild(w http.ResponseWriter, r *http.Request) {
@@ -344,6 +355,9 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, boards.ErrNotEmpty):
 		writeError(w, http.StatusConflict, "the folder is not empty")
+		return
+	case errors.Is(err, boards.ErrNotTrashed):
+		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeError(w, http.StatusInternalServerError, "storage error")

@@ -170,8 +170,12 @@ func (b *Backend) Save(_ context.Context, snaps []boards.Snapshot) error {
 }
 
 func actionFor(sn boards.Snapshot) gitstore.Action {
+	summary := fmt.Sprintf("Edit board %q", sn.Meta.Title)
+	if sn.Meta.Deleted {
+		summary = "Delete board " + sn.Meta.ID
+	}
 	a := gitstore.Action{
-		Summary:  fmt.Sprintf("Edit board %q", sn.Meta.Title),
+		Summary:  summary,
 		Trailers: map[string]string{"Aenotes-Board": sn.Meta.ID},
 	}
 	if len(sn.Editors) > 0 {
@@ -471,6 +475,18 @@ func mergeBoard(ours, theirs boards.Snapshot, inTheirs bool) (boards.Snapshot, e
 	out := ours
 	if theirs.Meta.Updated.After(ours.Meta.Updated) {
 		out.Meta = theirs.Meta
+	}
+	// A document deleted for good: the later side decides, and a tombstone
+	// carries no state.
+	switch {
+	case out.Meta.Deleted:
+		out.State = nil
+		return out, nil
+	case ours.Meta.Deleted:
+		out.State = theirs.State
+		return out, nil
+	case theirs.Meta.Deleted:
+		return out, nil
 	}
 	switch {
 	case len(ours.State) == 0:

@@ -197,3 +197,23 @@ func TestCreateInsideAParent(t *testing.T) {
 		t.Fatalf("parent markdown: %q", got.Markdown)
 	}
 }
+
+// Agents can move a document to the trash and back; a trashed one leaves
+// the list.
+func TestTrashAndRestore(t *testing.T) {
+	cs, _ := connect(t, Caller{Login: "alice", CanWrite: true})
+	var d Document
+	call(t, cs, "create_document", map[string]any{"title": "Old"}, &d, false)
+	call(t, cs, "trash_document", map[string]any{"id": d.ID}, &d, false)
+	var l listOut
+	call(t, cs, "list_documents", nil, &l, false)
+	if !d.Trashed || len(l.Documents) != 0 {
+		t.Fatalf("trashed: %+v, list %+v", d, l.Documents)
+	}
+	var back Document
+	call(t, cs, "restore_document", map[string]any{"id": d.ID}, &back, false)
+	call(t, cs, "list_documents", nil, &l, false)
+	if back.Trashed || len(l.Documents) != 1 {
+		t.Fatalf("restored: %+v, list %+v", back, l.Documents)
+	}
+}

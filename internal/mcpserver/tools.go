@@ -27,6 +27,8 @@ func registerTools(s *mcp.Server, d Deps) {
 	mcp.AddTool(s, &mcp.Tool{Name: "create_document", Description: "Create a page (mode=page, the default) or a board (mode=edgeless) with a title, optionally inside a folder, optionally with initial content as Markdown (headings, paragraphs, bold/italic/strike/code, links, bulleted/numbered/task lists, code blocks, quotes, dividers). A Markdown link to another document's URL becomes a live link to it (and makes that document a child of this one). On a board, the content goes into a note on the canvas. Pass parent to create the document inside another one."}, t.create)
 	mcp.AddTool(s, &mcp.Tool{Name: "append_to_document", Description: "Add Markdown content to the end of a page, or as a new note on a board (placed to the right of what is already there). Existing content is never changed. People who have the document open see it at once."}, t.appendTo)
 	mcp.AddTool(s, &mcp.Tool{Name: "update_document", Description: "Rename a document (title) and/or move it to another folder (folder; \"\" is the top level). Only the fields given change."}, t.update)
+	mcp.AddTool(s, &mcp.Tool{Name: "trash_document", Description: "Move a document to the trash. It disappears from the tree and the lists but is kept whole: restore_document brings it back where it was. Links to it in other documents are left as they are. Only a person can delete a document for good, from the trash."}, t.trash(true))
+	mcp.AddTool(s, &mcp.Tool{Name: "restore_document", Description: "Bring a document back from the trash."}, t.trash(false))
 	mcp.AddTool(s, &mcp.Tool{Name: "create_folder", Description: "Create a folder, at the top level or inside another folder (parent)."}, t.createFolder)
 	mcp.AddTool(s, &mcp.Tool{Name: "update_folder", Description: "Rename a folder (name) and/or move it inside another folder (parent; \"\" is the top level). A folder cannot go inside itself."}, t.updateFolder)
 	mcp.AddTool(s, &mcp.Tool{Name: "delete_folder", Description: "Delete an EMPTY folder. One that still holds documents or folders is refused: move them out first."}, t.deleteFolder)
@@ -41,6 +43,8 @@ type Document struct {
 	Folder  string    `json:"folder"`
 	URL     string    `json:"url"`
 	Updated time.Time `json:"updated"`
+	// Trashed is set for a document in the trash.
+	Trashed bool `json:"trashed,omitempty"`
 	// Children are the documents this one links to: what the sidebar shows
 	// inside it.
 	Children []string `json:"children,omitempty"`
@@ -56,7 +60,7 @@ type FolderInfo struct {
 func (t *tools) url(id string) string { return t.BaseURL + "/b/" + id }
 
 func (t *tools) doc(m boards.Meta) Document {
-	return Document{ID: m.ID, Title: titleOr(m.Title), Mode: m.Mode, Folder: t.Store.FolderOf(m), URL: t.url(m.ID), Updated: m.Updated}
+	return Document{ID: m.ID, Title: titleOr(m.Title), Mode: m.Mode, Folder: t.Store.FolderOf(m), URL: t.url(m.ID), Updated: m.Updated, Trashed: !m.Trashed.IsZero()}
 }
 
 func titleOr(s string) string {
@@ -88,6 +92,9 @@ func (t *tools) list(_ context.Context, _ *mcp.CallToolRequest, _ listIn) (*mcp.
 	}
 	links := t.Store.Links()
 	for _, m := range t.Store.List() {
+		if !m.Trashed.IsZero() {
+			continue
+		}
 		d := t.doc(m)
 		d.Children = links[m.ID]
 		out.Documents = append(out.Documents, d)
@@ -116,6 +123,9 @@ func (t *tools) search(_ context.Context, _ *mcp.CallToolRequest, in searchIn) (
 	}
 	out := searchOut{Matches: []Match{}}
 	for _, m := range t.Store.List() {
+		if !m.Trashed.IsZero() {
+			continue
+		}
 		hit := strings.Contains(strings.ToLower(m.Title), q)
 		snippet := ""
 		if text, err := t.text(m); err == nil {
@@ -341,6 +351,24 @@ func (t *tools) update(ctx context.Context, _ *mcp.CallToolRequest, in updateIn)
 	}
 	t.live(ctx, id, upd)
 	return nil, t.doc(m), nil
+}
+
+type trashIn struct {
+	ID string `json:"id"`
+}
+
+func (t *tools) trash(on bool) mcp.ToolHandlerFor[trashIn, Document] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, in trashIn) (*mcp.CallToolResult, Document, error) {
+		login, err := t.writer(ctx)
+		if err != nil {
+			return nil, Document{}, err
+		}
+		m, _, err := t.Store.Update(docID(in.ID), boards.Patch{Trashed: &on}, login)
+		if err != nil {
+			return nil, Document{}, notFound(in.ID, err)
+		}
+		return nil, t.doc(m), nil
+	}
 }
 
 type createFolderIn struct {

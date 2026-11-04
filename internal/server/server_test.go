@@ -240,3 +240,23 @@ func TestAddChild(t *testing.T) {
 		}
 	}
 }
+
+// Trash, restore and delete for good over the API.
+func TestTrashOverTheAPI(t *testing.T) {
+	ts := newTestServer(t)
+	var m boards.Meta
+	_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"Old"}`)
+	_ = json.Unmarshal([]byte(body), &m)
+	if code, _ := do(t, "DELETE", ts.URL+"/api/v1/boards/"+m.ID, ""); code != http.StatusConflict {
+		t.Fatalf("delete before trash: %d", code)
+	}
+	if code, body := do(t, "PATCH", ts.URL+"/api/v1/boards/"+m.ID, `{"trashed":true}`); code != http.StatusOK || !strings.Contains(body, `"trashed":`) {
+		t.Fatalf("trash: %d %s", code, body)
+	}
+	if code, _ := do(t, "DELETE", ts.URL+"/api/v1/boards/"+m.ID, ""); code != http.StatusNoContent {
+		t.Fatalf("delete: %d", code)
+	}
+	if code, _ := do(t, "GET", ts.URL+"/api/v1/boards/"+m.ID, ""); code != http.StatusNotFound {
+		t.Fatalf("get after delete: %d", code)
+	}
+}
