@@ -2,7 +2,7 @@
 // aenotes page or board — on the server, for tools that work with content
 // (the MCP server): a document as Markdown, and Markdown as new blocks.
 //
-// The block shape is BlockSuite's own (affine 0.22): the "blocks" map holds
+// The block shape is BlockSuite's own (affine 0.22 to 0.27): the "blocks" map holds
 // one Y.Map per block with sys:id, sys:flavour, sys:version, sys:children (a
 // Y.Array of child ids) and its props as prop:<name> — text as Y.Text, nested
 // objects as Y.Maps. Blocks written here carry the same keys and defaults

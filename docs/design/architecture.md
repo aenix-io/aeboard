@@ -31,7 +31,7 @@ BlockSuite also needs a few host-side settings, all in `web/src/board/editor.ts`
 - the template panel's contents, vendored from AFFiNE's MIT frontend (`web/vendor/affine-templates`);
 - `@preact/signals-core` pinned to 1.13, because 1.14 changed batching in a way that leaves BlockSuite's toolbars stale.
 
-The last published npm release of `@blocksuite/affine` is 0.22.4 (July 2025). Only the MIT packages are used, never `@blocksuite/blocks`/`presets` (MPL-2.0) or AFFiNE's EE-licensed backend.
+The last npm release of `@blocksuite/affine` is 0.22.4 (July 2025); BlockSuite now lives only in the AFFiNE monorepo (`blocksuite/`, MIT). `web/scripts/build-blocksuite.sh` builds it from a pinned AFFiNE tag into npm tarballs committed under `web/vendor/blocksuite` (with `REVISION` naming the commit), and `web/package.json` installs those, so `npm ci` and CI need neither yarn nor an AFFiNE checkout. To upgrade: change the tag and commit in the script, run it from `web/`, then `npm install`. Only `blocksuite/` and the root workspace files are fetched; never `@blocksuite/blocks`/`presets` (MPL-2.0) or AFFiNE's `packages/` (the EE-licensed backend and native code among them).
 
 ygo is pinned (`v1.55.0`) and touched in one place (`internal/server`): the websocket server, its persistence interface, `Authorize`, `GetDoc`/`BroadcastUpdate` for injecting fetched changes, `OnUnloadDocument`. The CRDT functions are used for merging states. If the project stalls, this surface is small enough to replace.
 
