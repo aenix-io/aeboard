@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
+	mux.HandleFunc("POST /api/v1/boards/{id}/children", s.addChild)
 	mux.HandleFunc("POST /api/v1/folders", s.createFolder)
 	mux.HandleFunc("PATCH /api/v1/folders/{id}", s.patchFolder)
 	mux.HandleFunc("DELETE /api/v1/folders/{id}", s.deleteFolder)
@@ -137,16 +138,25 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 type boardList struct {
-	Boards  []boards.Meta   `json:"boards"`
+	Boards  []docEntry      `json:"boards"`
 	Folders []boards.Folder `json:"folders"`
 }
 
+// docEntry is a document in the catalog: its metadata and the documents it
+// links to (its children in the sidebar).
+type docEntry struct {
+	boards.Meta
+	Links []string `json:"links,omitempty"`
+}
+
 func (s *Server) listBoards(w http.ResponseWriter, _ *http.Request) {
-	docs := s.store.List()
-	for i := range docs {
+	links := s.store.Links()
+	docs := []docEntry{}
+	for _, m := range s.store.List() {
 		// A document whose folder was deleted on another replica shows at
 		// the top level.
-		docs[i].Folder = s.store.FolderOf(docs[i])
+		m.Folder = s.store.FolderOf(m)
+		docs = append(docs, docEntry{Meta: m, Links: links[m.ID]})
 	}
 	writeJSON(w, http.StatusOK, boardList{Boards: docs, Folders: s.store.Folders()})
 }
@@ -244,6 +254,28 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 		s.ApplyRemote(r.Context(), map[string][]byte{m.ID: upd})
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// addChild puts a document inside another one (AFFiNE's "add linked doc"):
+// a link to it is added at the end of the parent's body.
+func (s *Server) addChild(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Doc string `json:"doc"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	parent := r.PathValue("id")
+	upd, err := s.store.Link(parent, in.Doc, s.login(r))
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if upd != nil {
+		s.ApplyRemote(r.Context(), map[string][]byte{parent: upd})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Attachments are addressed per board so access can follow the board's

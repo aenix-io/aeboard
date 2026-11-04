@@ -21,10 +21,10 @@ type tools struct{ Deps }
 
 func registerTools(s *mcp.Server, d Deps) {
 	t := &tools{d}
-	mcp.AddTool(s, &mcp.Tool{Name: "list_documents", Description: "List every folder and document: the folder tree (id, name, parent) and each document's id, title, mode (page = a rich-text document, edgeless = a whiteboard), folder and URL. Start here to find what to read."}, t.list)
+	mcp.AddTool(s, &mcp.Tool{Name: "list_documents", Description: "List every folder and document: the folder tree (id, name, parent) and each document's id, title, mode (page = a rich-text document, edgeless = a whiteboard), folder, URL and children. A document's children are the documents it links to — that is how documents nest, as in AFFiNE: linking to a document from another one puts it inside. Start here to find what to read."}, t.list)
 	mcp.AddTool(s, &mcp.Tool{Name: "search_documents", Description: "Find documents whose title or text contains the query (case-insensitive). Returns the matches with a snippet around the first hit in the text."}, t.search)
 	mcp.AddTool(s, &mcp.Tool{Name: "read_document", Description: "Read one document as Markdown, with its title, mode, folder path and URL. For a page this is its text top to bottom; for a board it is the text of every note on the canvas, then the text written on shapes. Links to other documents are rendered as [Title](URL)."}, t.read)
-	mcp.AddTool(s, &mcp.Tool{Name: "create_document", Description: "Create a page (mode=page, the default) or a board (mode=edgeless) with a title, optionally inside a folder, optionally with initial content as Markdown (headings, paragraphs, bold/italic/strike/code, links, bulleted/numbered/task lists, code blocks, quotes, dividers). A Markdown link to another document's URL becomes a live link to it. On a board, the content goes into a note on the canvas."}, t.create)
+	mcp.AddTool(s, &mcp.Tool{Name: "create_document", Description: "Create a page (mode=page, the default) or a board (mode=edgeless) with a title, optionally inside a folder, optionally with initial content as Markdown (headings, paragraphs, bold/italic/strike/code, links, bulleted/numbered/task lists, code blocks, quotes, dividers). A Markdown link to another document's URL becomes a live link to it (and makes that document a child of this one). On a board, the content goes into a note on the canvas. Pass parent to create the document inside another one."}, t.create)
 	mcp.AddTool(s, &mcp.Tool{Name: "append_to_document", Description: "Add Markdown content to the end of a page, or as a new note on a board (placed to the right of what is already there). Existing content is never changed. People who have the document open see it at once."}, t.appendTo)
 	mcp.AddTool(s, &mcp.Tool{Name: "update_document", Description: "Rename a document (title) and/or move it to another folder (folder; \"\" is the top level). Only the fields given change."}, t.update)
 	mcp.AddTool(s, &mcp.Tool{Name: "create_folder", Description: "Create a folder, at the top level or inside another folder (parent)."}, t.createFolder)
@@ -41,6 +41,9 @@ type Document struct {
 	Folder  string    `json:"folder"`
 	URL     string    `json:"url"`
 	Updated time.Time `json:"updated"`
+	// Children are the documents this one links to: what the sidebar shows
+	// inside it.
+	Children []string `json:"children,omitempty"`
 }
 
 // FolderInfo is a folder as the tools show it.
@@ -83,8 +86,11 @@ func (t *tools) list(_ context.Context, _ *mcp.CallToolRequest, _ listIn) (*mcp.
 	for _, f := range t.Store.Folders() {
 		out.Folders = append(out.Folders, FolderInfo{ID: f.ID, Name: f.Name, Parent: f.Parent})
 	}
+	links := t.Store.Links()
 	for _, m := range t.Store.List() {
-		out.Documents = append(out.Documents, t.doc(m))
+		d := t.doc(m)
+		d.Children = links[m.ID]
+		out.Documents = append(out.Documents, d)
 	}
 	return nil, out, nil
 }
@@ -239,6 +245,7 @@ type createIn struct {
 	Title    string `json:"title"`
 	Mode     string `json:"mode,omitempty" jsonschema:"page (default) or edgeless (a whiteboard)"`
 	Folder   string `json:"folder,omitempty" jsonschema:"the folder's id; empty is the top level"`
+	Parent   string `json:"parent,omitempty" jsonschema:"a document to create this one inside: a link to it is added at the end of that document, which makes it a child there"`
 	Markdown string `json:"markdown,omitempty" jsonschema:"initial content"`
 }
 
@@ -250,6 +257,12 @@ func (t *tools) create(ctx context.Context, _ *mcp.CallToolRequest, in createIn)
 	if in.Mode == "" {
 		in.Mode = boards.ModePage
 	}
+	parent := docID(in.Parent)
+	if parent != "" {
+		if _, err := t.Store.Get(parent); err != nil {
+			return nil, Document{}, notFound(in.Parent, err)
+		}
+	}
 	m, err := t.Store.Create(boards.CreateInput{Mode: in.Mode, Title: in.Title, Folder: in.Folder}, login)
 	if err != nil {
 		return nil, Document{}, err
@@ -258,6 +271,13 @@ func (t *tools) create(ctx context.Context, _ *mcp.CallToolRequest, in createIn)
 		if err := t.write(ctx, m, in.Markdown, login); err != nil {
 			return nil, Document{}, err
 		}
+	}
+	if parent != "" {
+		upd, err := t.Store.Link(parent, m.ID, login)
+		if err != nil {
+			return nil, Document{}, err
+		}
+		t.live(ctx, parent, upd)
 	}
 	return nil, t.doc(m), nil
 }
@@ -268,26 +288,18 @@ func (t *tools) write(ctx context.Context, m boards.Meta, markdown, login string
 	if len(specs) == 0 {
 		return errors.New("the markdown has no content")
 	}
-	state, err := t.Store.LoadState(m.ID)
+	upd, err := t.Store.Append(m.ID, specs, login)
 	if err != nil {
 		return err
 	}
-	var upd []byte
-	if m.Mode == boards.ModePage {
-		upd, err = blocks.AppendToPage(state, specs)
-	} else {
-		upd, err = blocks.AddBoardNote(state, specs)
-	}
-	if err != nil {
-		return err
-	}
-	if _, err := t.Store.ApplyUpdate(m.ID, upd, login); err != nil {
-		return err
-	}
-	if t.Live != nil {
-		t.Live(ctx, m.ID, upd)
-	}
+	t.live(ctx, m.ID, upd)
 	return nil
+}
+
+func (t *tools) live(ctx context.Context, id string, upd []byte) {
+	if upd != nil && t.Live != nil {
+		t.Live(ctx, id, upd)
+	}
 }
 
 type appendIn struct {
@@ -327,9 +339,7 @@ func (t *tools) update(ctx context.Context, _ *mcp.CallToolRequest, in updateIn)
 	if err != nil {
 		return nil, Document{}, notFound(in.ID, err)
 	}
-	if upd != nil && t.Live != nil {
-		t.Live(ctx, id, upd)
-	}
+	t.live(ctx, id, upd)
 	return nil, t.doc(m), nil
 }
 

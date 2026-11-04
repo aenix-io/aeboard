@@ -174,3 +174,26 @@ func TestReadOnlyCallerCannotWrite(t *testing.T) {
 		}
 	}
 }
+
+// A document created with a parent is linked from it: its child.
+func TestCreateInsideAParent(t *testing.T) {
+	cs, h := connect(t, Caller{Login: "alice", CanWrite: true})
+	var parent, child Document
+	call(t, cs, "create_document", map[string]any{"title": "Parent"}, &parent, false)
+	call(t, cs, "create_document", map[string]any{"title": "Child", "parent": parent.URL}, &child, false)
+	if h.live[parent.ID] != 1 {
+		t.Fatalf("parent live updates: %d", h.live[parent.ID])
+	}
+	var l listOut
+	call(t, cs, "list_documents", nil, &l, false)
+	for _, d := range l.Documents {
+		if d.ID == parent.ID && (len(d.Children) != 1 || d.Children[0] != child.ID) {
+			t.Fatalf("children: %+v", d)
+		}
+	}
+	var got readOut
+	call(t, cs, "read_document", map[string]any{"id": parent.ID}, &got, false)
+	if got.Markdown != "[Child]("+child.URL+")\n" {
+		t.Fatalf("parent markdown: %q", got.Markdown)
+	}
+}

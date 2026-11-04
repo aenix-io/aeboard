@@ -1,7 +1,7 @@
 // Generates internal/blocks/testdata/sample.bin: a page BlockSuite itself
 // wrote, with one block of every kind the blocks package reads and writes
 // (headings, text with marks and a link, lists, a todo, code, a quote, a
-// divider, a reference to another document). The Go tests check their
+// divider, a reference to another document, a linked-doc card). The Go tests check their
 // reading and their own blocks against it.
 //   npx vite-node scripts/gen-blocks-sample.ts > ../internal/blocks/testdata/sample.bin
 import { Text } from '@blocksuite/affine/store';
@@ -33,6 +33,7 @@ store.load(() => {
   store.addBlock('affine:divider', {}, note);
   const rid = store.addBlock('affine:paragraph', { text: new Text('') }, note);
   (store.getBlock(rid)!.model as any).props.text.insert(' ', 0, { reference: { type: 'LinkedPage', pageId: 'abcdefghjk' } });
+  store.addBlock('affine:embed-linked-doc', { pageId: 'mnpqrstvwx' }, note);
 });
 const json = (live.spaceDoc.getMap('blocks') as Y.Map<unknown>).toJSON();
 const deltas: Record<string, unknown> = {};

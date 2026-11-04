@@ -76,6 +76,13 @@ func writeBlocks(b *strings.Builder, blocks []*Block, indent string, link LinkRe
 			fmt.Fprintf(b, "%s```%s\n%s%s\n%s```\n\n", indent, lang, indent, strings.ReplaceAll(plain(bl.Text), "\n", "\n"+indent), indent)
 		case "affine:divider":
 			fmt.Fprintf(b, "%s---\n\n", indent)
+		case "affine:embed-linked-doc", "affine:embed-synced-doc":
+			id, _ := bl.Props["pageId"].(string)
+			title, url := id, "/b/"+id
+			if link != nil {
+				title, url = link(id)
+			}
+			fmt.Fprintf(b, "%s[%s](%s)\n\n", indent, title, url)
 		case "affine:image":
 			fmt.Fprintf(b, "%s![image]\n\n", indent)
 		default:
@@ -146,6 +153,15 @@ type Spec struct {
 	Checked  bool
 	Language string
 	Children []Spec
+}
+
+// Reference is a paragraph that holds a link to another document (an
+// @-mention), the way AFFiNE adds a linked page.
+func Reference(docID string) Spec {
+	return Spec{Flavour: "affine:paragraph", Type: "text", Text: []crdt.Delta{{
+		Op: crdt.DeltaOpInsert, Insert: " ",
+		Attributes: crdt.Attributes{"reference": map[string]any{"type": "LinkedPage", "pageId": docID}},
+	}}}
 }
 
 var md = goldmark.New(goldmark.WithExtensions(extension.GFM))

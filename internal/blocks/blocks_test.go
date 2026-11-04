@@ -40,7 +40,8 @@ func TestMarkdownOfABlockSuitePage(t *testing.T) {
 		"```go\nfmt.Println(1)\n```\n\n" +
 		"> quoted\n\n" +
 		"---\n\n" +
-		"[Other doc](https://notes.example/b/abcdefghjk)\n"
+		"[Other doc](https://notes.example/b/abcdefghjk)\n\n" +
+		"[Other doc](https://notes.example/b/mnpqrstvwx)\n"
 	if got != want {
 		t.Fatalf("markdown:\n%s\nwant:\n%s", got, want)
 	}
@@ -175,4 +176,15 @@ func sortedKeys(m *crdt.YMap) []string {
 		}
 	}
 	return k
+}
+
+// Links come from references in text and from linked-doc cards, in order.
+func TestLinks(t *testing.T) {
+	d, err := Load(sample(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(d.Links(), ","); got != "abcdefghjk,mnpqrstvwx" {
+		t.Fatalf("links: %s", got)
+	}
 }

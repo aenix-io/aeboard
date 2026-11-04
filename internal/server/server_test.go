@@ -210,3 +210,33 @@ func TestShutdownEndsStatusStreams(t *testing.T) {
 		t.Fatalf("shutdown with an open stream: %v", err)
 	}
 }
+
+// A document put inside another shows in the catalog as its link.
+func TestAddChild(t *testing.T) {
+	ts := newTestServer(t)
+	var parent, child boards.Meta
+	_, body := do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"Parent"}`)
+	_ = json.Unmarshal([]byte(body), &parent)
+	_, body = do(t, "POST", ts.URL+"/api/v1/boards", `{"mode":"page","title":"Child"}`)
+	_ = json.Unmarshal([]byte(body), &child)
+
+	if code, body := do(t, "POST", ts.URL+"/api/v1/boards/"+parent.ID+"/children", `{"doc":"`+child.ID+`"}`); code != http.StatusNoContent {
+		t.Fatalf("add child: %d %s", code, body)
+	}
+	if code, _ := do(t, "POST", ts.URL+"/api/v1/boards/"+parent.ID+"/children", `{"doc":"nosuchdoc0"}`); code != http.StatusNotFound {
+		t.Fatalf("missing child: %d", code)
+	}
+	_, body = do(t, "GET", ts.URL+"/api/v1/boards", "")
+	var list struct {
+		Boards []struct {
+			ID    string   `json:"id"`
+			Links []string `json:"links"`
+		} `json:"boards"`
+	}
+	_ = json.Unmarshal([]byte(body), &list)
+	for _, b := range list.Boards {
+		if b.ID == parent.ID && (len(b.Links) != 1 || b.Links[0] != child.ID) {
+			t.Fatalf("parent links: %v", b.Links)
+		}
+	}
+}

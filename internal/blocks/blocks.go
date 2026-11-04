@@ -189,3 +189,36 @@ func newID() string {
 	}
 	return string(b[:])
 }
+
+// Links lists the documents this one links to, in the order they appear:
+// references in text (@-mentions) and linked or synced document cards. It
+// is what the sidebar shows as the document's children (AFFiNE's rule).
+func (d *Doc) Links() []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	var walk func(b *Block)
+	walk = func(b *Block) {
+		switch b.Flavour {
+		case "affine:embed-linked-doc", "affine:embed-synced-doc":
+			id, _ := b.Props["pageId"].(string)
+			add(id)
+		}
+		for _, op := range b.Text {
+			if ref, ok := op.Attributes["reference"].(map[string]any); ok {
+				id, _ := ref["pageId"].(string)
+				add(id)
+			}
+		}
+		for _, c := range b.Children {
+			walk(c)
+		}
+	}
+	walk(d.Root)
+	return out
+}

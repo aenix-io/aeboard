@@ -27,6 +27,7 @@ import (
 
 	"github.com/reearth/ygo/crdt"
 
+	"github.com/aenix-io/aenotes/internal/blocks"
 	"github.com/aenix-io/aenotes/internal/seed"
 )
 
@@ -144,6 +145,9 @@ type board struct {
 	editors    map[string]bool
 	// gen counts changes, so a flush that raced an edit leaves it dirty.
 	gen uint64
+	// links are the documents this one links to (see blocks.Doc.Links),
+	// derived from the state and kept in memory only.
+	links []string
 }
 
 // Open loads every board from the backend.
@@ -173,6 +177,7 @@ func Open(ctx context.Context, backend Backend) (*Store, error) {
 				}
 			}
 		}
+		b.links = linksOf(b.meta.ID, b.state)
 		s.boards[b.meta.ID] = b
 	}
 	if fb, ok := backend.(FolderBackend); ok {
@@ -276,6 +281,7 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Folder: in.Folder, Created: now, Updated: now},
 		state: state,
 	}
+	b.links = linksOf(id, state)
 	s.boards[id] = b
 	s.catalogVersion++
 	s.markLocked(b, actor)
@@ -388,6 +394,7 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 		b.meta.Title = t
 		s.catalogVersion++
 	}
+	s.relinkLocked(b)
 	b.meta.Updated = s.now().UTC()
 	if len(editors) == 0 {
 		s.markLocked(b, "")
@@ -422,7 +429,7 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 		if !ok {
 			m := r.Meta
 			normMeta(&m)
-			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State)}
+			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State), links: linksOf(id, r.State)}
 			s.catalogVersion++
 			continue
 		}
@@ -455,9 +462,96 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			b.meta.Title = t
 			s.catalogVersion++
 		}
+		s.relinkLocked(b)
 		gained[id] = diff
 	}
 	return gained, nil
+}
+
+// Append adds blocks at the end of a document: a page gets them below its
+// text, a board as a new note on the canvas. It returns the update, for the
+// document's live room.
+func (s *Store) Append(id string, specs []blocks.Spec, actor string) ([]byte, error) {
+	m, err := s.Get(id)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.LoadState(id)
+	if err != nil {
+		return nil, err
+	}
+	var upd []byte
+	if m.Mode == ModePage {
+		upd, err = blocks.AppendToPage(state, specs)
+	} else {
+		upd, err = blocks.AddBoardNote(state, specs)
+	}
+	if err != nil {
+		return nil, err
+	}
+	// The update merges as a CRDT, so an edit that lands in between is kept.
+	if _, err := s.ApplyUpdate(id, upd, actor); err != nil {
+		return nil, err
+	}
+	return upd, nil
+}
+
+// Link makes child a child of parent the way AFFiNE does: a line with a
+// reference to it at the end of parent's body. A child it already links to
+// is left alone (nil update).
+func (s *Store) Link(parent, child, actor string) ([]byte, error) {
+	if parent == child {
+		return nil, fmt.Errorf("%w: a document cannot hold itself", ErrInvalid)
+	}
+	if _, err := s.Get(child); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	b, ok := s.boards[parent]
+	has := ok && slices.Contains(b.links, child)
+	s.mu.Unlock()
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if has {
+		return nil, nil
+	}
+	return s.Append(parent, []blocks.Spec{blocks.Reference(child)}, actor)
+}
+
+// Links returns, per document, the documents it links to in order of
+// appearance (documents that link to nothing are left out).
+func (s *Store) Links() map[string][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string][]string{}
+	for id, b := range s.boards {
+		if len(b.links) > 0 {
+			out[id] = slices.Clone(b.links)
+		}
+	}
+	return out
+}
+
+// relinkLocked rederives a board's links after its state changed; a change
+// bumps the catalog version, so clients redraw the tree.
+func (s *Store) relinkLocked(b *board) {
+	if l := linksOf(b.meta.ID, b.state); !slices.Equal(l, b.links) {
+		b.links = l
+		s.catalogVersion++
+	}
+}
+
+// linksOf is what the document id links to, a link to itself left out.
+func linksOf(id string, state []byte) []string {
+	if len(state) == 0 {
+		return nil
+	}
+	d, err := blocks.Load(state)
+	if err != nil {
+		return nil
+	}
+	return slices.DeleteFunc(d.Links(), func(l string) bool { return l == id })
 }
 
 // diffFrom is the update that takes a doc holding `from` to `to`.
