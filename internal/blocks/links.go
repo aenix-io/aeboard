@@ -254,8 +254,11 @@ func Retarget(state []byte, from, to string) ([]byte, error) {
 		}
 		pos := 0
 		for _, op := range b.Text {
-			s, _ := op.Insert.(string)
-			n := utf16Len(s)
+			// An embed in the text (not a string) takes one position.
+			n := 1
+			if s, ok := op.Insert.(string); ok {
+				n = utf16Len(s)
+			}
 			if ref, ok := op.Attributes["reference"].(map[string]any); ok {
 				if id, _ := ref["pageId"].(string); id == from {
 					next := map[string]any{}

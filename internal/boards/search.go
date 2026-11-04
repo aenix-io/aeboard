@@ -26,12 +26,12 @@ func (s *Store) Search(q string) []Hit {
 		if !m.Trashed.IsZero() {
 			continue
 		}
-		hit := strings.Contains(strings.ToLower(m.Title), q)
+		_, _, hit := foldIndex(m.Title, q)
 		snippet := ""
-		if text := s.Text(m); text != "" {
-			if i := strings.Index(strings.ToLower(text), q); i >= 0 {
+		if text := s.Text(m, nil); text != "" {
+			if from, to, ok := foldIndex(text, q); ok {
 				hit = true
-				snippet = around(text, i, len(q))
+				snippet = around(text, from, to-from)
 			}
 		}
 		if hit {
@@ -41,9 +41,10 @@ func (s *Store) Search(q string) []Hit {
 	return out
 }
 
-// Text is a document's content as plain Markdown: a page's text, a board's
-// notes and the text on its shapes. Links to documents read as their titles.
-func (s *Store) Text(m Meta) string {
+// Text is a document's content as Markdown: a page's text, a board's notes
+// and the text on its shapes. link names the documents it links to (nil:
+// their titles, with /b/<id>).
+func (s *Store) Text(m Meta, link blocks.LinkResolver) string {
 	state, err := s.LoadState(m.ID)
 	if err != nil {
 		return ""
@@ -53,20 +54,52 @@ func (s *Store) Text(m Meta) string {
 		return ""
 	}
 	page := m.Mode == ModePage
-	md := d.Markdown(page, func(id string) (string, string) {
-		t := "Untitled"
-		if o, err := s.Get(id); err == nil && o.Title != "" {
-			t = o.Title
+	if link == nil {
+		link = func(id string) (string, string) {
+			t := "Untitled"
+			if o, err := s.Get(id); err == nil && o.Title != "" {
+				t = o.Title
+			}
+			return t, "/b/" + id
 		}
-		return t, "/b/" + id
-	})
+	}
+	md := d.Markdown(page, link)
 	if !page {
 		if shapes := d.Shapes(); len(shapes) > 0 {
 			slices.Sort(shapes)
-			md += "\n" + strings.Join(shapes, "\n") + "\n"
+			md += "\n## On the canvas\n\n- " + strings.Join(shapes, "\n- ") + "\n"
 		}
 	}
 	return md
+}
+
+// foldIndex finds q (already lower-cased) in s ignoring case, and returns
+// where the match is in s itself. Lower-casing can change a letter's length
+// in bytes (Ⱥ is 2 bytes, ⱥ is 3), so positions in strings.ToLower(s) are
+// not positions in s: each byte of the lower-cased text remembers the byte
+// of s it came from.
+func foldIndex(s, q string) (from, to int, ok bool) {
+	if q == "" {
+		return 0, 0, false
+	}
+	var lower strings.Builder
+	var origin []int
+	for i, r := range s {
+		l := strings.ToLower(string(r))
+		lower.WriteString(l)
+		for range len(l) {
+			origin = append(origin, i)
+		}
+	}
+	at := strings.Index(lower.String(), q)
+	if at < 0 {
+		return 0, 0, false
+	}
+	end := len(s)
+	if next := at + len(q); next < len(origin) {
+		end = origin[next]
+	}
+	return origin[at], end, true
 }
 
 // around cuts ~80 bytes either side of a hit, on rune boundaries, on one line.

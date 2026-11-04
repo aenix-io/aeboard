@@ -220,3 +220,56 @@ func TestTrashAndRestore(t *testing.T) {
 		t.Fatalf("restored: %+v, list %+v", back, l.Documents)
 	}
 }
+
+// A tool that panics answers with an error; the server lives on.
+func TestAPanicIsTheCallsError(t *testing.T) {
+	srv := New(Deps{Store: nil, Version: "test"})
+	mcp.AddTool(srv, &mcp.Tool{Name: "boom"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, struct{}, error) {
+		panic("boom")
+	})
+	st, ct := mcp.NewInMemoryTransports()
+	if _, err := srv.Connect(t.Context(), st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "v0"}, nil).Connect(t.Context(), ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+	if _, err := cs.CallTool(t.Context(), &mcp.CallToolParams{Name: "boom"}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err: %v", err)
+	}
+	// Still answering.
+	if _, err := cs.ListTools(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Moving a document inside another links it there and unlinks it from
+// where it was.
+func TestMoveInsideKeepsLinks(t *testing.T) {
+	cs, _ := connect(t, Caller{Login: "alice", CanWrite: true})
+	var a, b, c Document
+	call(t, cs, "create_document", map[string]any{"title": "A"}, &a, false)
+	call(t, cs, "create_document", map[string]any{"title": "B"}, &b, false)
+	call(t, cs, "create_document", map[string]any{"title": "C", "parent": a.ID}, &c, false)
+	call(t, cs, "update_document", map[string]any{"id": c.ID, "parent": b.ID}, nil, false)
+	var l listOut
+	call(t, cs, "list_documents", nil, &l, false)
+	for _, d := range l.Documents {
+		switch d.ID {
+		case a.ID:
+			if len(d.Links) != 0 {
+				t.Fatalf("A still links: %v", d.Links)
+			}
+		case b.ID:
+			if len(d.Links) != 1 || d.Links[0] != c.ID {
+				t.Fatalf("B links: %v", d.Links)
+			}
+		case c.ID:
+			if d.Parent != b.ID {
+				t.Fatalf("C's parent: %q", d.Parent)
+			}
+		}
+	}
+}

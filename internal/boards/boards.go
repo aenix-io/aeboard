@@ -447,11 +447,11 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 		return false, nil
 	}
 	b.state = merged
-	if t := DocTitle(merged); t != b.meta.Title {
+	// One reading of the state gives both the title and the links.
+	if t := s.relinkLocked(b); t != b.meta.Title {
 		b.meta.Title = t
 		s.catalogVersion++
 	}
-	s.relinkLocked(b)
 	b.meta.Updated = s.now().UTC()
 	if len(editors) == 0 {
 		s.markLocked(b, "")
@@ -531,11 +531,10 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			return gained, fmt.Errorf("board %s: %w", id, err)
 		}
 		b.state = merged
-		if t := DocTitle(merged); t != "" && t != b.meta.Title {
+		if t := s.relinkLocked(b); t != "" && t != b.meta.Title {
 			b.meta.Title = t
 			s.catalogVersion++
 		}
-		s.relinkLocked(b)
 		gained[id] = diff
 	}
 	return gained, nil
@@ -594,6 +593,14 @@ func (s *Store) PlaceChild(parent, child string, place blocks.Place, actor strin
 // content, and points into's links to id at the copy: a shortcut becomes a
 // document of its own there. It returns the copy and the update for into.
 func (s *Store) Copy(id, into, actor string) (Meta, []byte, error) {
+	// Where the copy goes is checked first: a copy left behind by a failed
+	// call would be a stray document.
+	if into == "" || into == id {
+		return Meta{}, nil, fmt.Errorf("%w: a copy goes inside another document", ErrInvalid)
+	}
+	if _, err := s.Get(into); err != nil {
+		return Meta{}, nil, err
+	}
 	src, err := s.Get(id)
 	if err != nil {
 		return Meta{}, nil, err
@@ -725,25 +732,34 @@ func (s *Store) Links() map[string][]string {
 	return out
 }
 
-// relinkLocked rederives a board's links after its state changed; a change
-// bumps the catalog version, so clients redraw the tree.
-func (s *Store) relinkLocked(b *board) {
-	if l := linksOf(b.meta.ID, b.state); !slices.Equal(l, b.links) {
+// relinkLocked rederives a board's links after its state changed (a change
+// bumps the catalog version, so clients redraw the tree) and returns the
+// title written in the state, read on the same pass.
+func (s *Store) relinkLocked(b *board) string {
+	title, l := docInfo(b.meta.ID, b.state)
+	if !slices.Equal(l, b.links) {
 		b.links = l
 		s.catalogVersion++
 	}
+	return title
 }
 
 // linksOf is what the document id links to, a link to itself left out.
 func linksOf(id string, state []byte) []string {
+	_, l := docInfo(id, state)
+	return l
+}
+
+// docInfo reads a state once for its title and its links.
+func docInfo(id string, state []byte) (string, []string) {
 	if len(state) == 0 {
-		return nil
+		return "", nil
 	}
 	d, err := blocks.Load(state)
 	if err != nil {
-		return nil
+		return "", nil
 	}
-	return slices.DeleteFunc(d.Links(), func(l string) bool { return l == id })
+	return d.Title(), slices.DeleteFunc(d.Links(), func(l string) bool { return l == id })
 }
 
 // diffFrom is the update that takes a doc holding `from` to `to`.

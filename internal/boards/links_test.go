@@ -153,3 +153,43 @@ func TestSearchAndMode(t *testing.T) {
 		t.Fatalf("bad mode: %v", err)
 	}
 }
+
+// A letter whose lower case is longer in bytes (Ⱥ → ⱥ) does not throw the
+// search's positions off.
+func TestSearchFoldsCaseSafely(t *testing.T) {
+	s := open(t, DirBackend{Root: t.TempDir()})
+	m, _ := s.Create(CreateInput{Mode: ModePage, Title: "x"}, "")
+	if _, err := s.Append(m.ID, blocks.Parse(strings.Repeat("Ⱥ", 200)+" needle here"), ""); err != nil {
+		t.Fatal(err)
+	}
+	hits := s.Search("NEEDLE")
+	if len(hits) != 1 || !strings.Contains(hits[0].Snippet, "needle here") {
+		t.Fatalf("hits: %+v", hits)
+	}
+	if from, to, ok := foldIndex("aⱯb", strings.ToLower("Ɐ")); !ok || from != 1 || to != 4 {
+		t.Fatalf("Ɐ: %d %d %v", from, to, ok)
+	}
+}
+
+// A folder holding only trashed documents can be deleted; a copy needs a
+// document to go into, and a failed one leaves nothing behind.
+func TestFolderWithTrashAndCopyTarget(t *testing.T) {
+	s := open(t, DirBackend{Root: t.TempDir()})
+	f, _ := s.CreateFolder("F", "")
+	d, _ := s.Create(CreateInput{Mode: ModePage, Folder: f.ID}, "")
+	yes := true
+	_, _, _ = s.Update(d.ID, Patch{Trashed: &yes}, "")
+	if err := s.DeleteFolder(f.ID); err != nil {
+		t.Fatalf("delete a folder of trash: %v", err)
+	}
+	n := len(s.List())
+	if _, _, err := s.Copy(d.ID, "", ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("copy into nothing: %v", err)
+	}
+	if _, _, err := s.Copy(d.ID, "nosuchdoc0", ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("copy into a missing document: %v", err)
+	}
+	if len(s.List()) != n {
+		t.Fatal("a failed copy left a document")
+	}
+}

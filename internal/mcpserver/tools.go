@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -132,27 +131,6 @@ func (t *tools) search(_ context.Context, _ *mcp.CallToolRequest, in searchIn) (
 	return nil, out, nil
 }
 
-// text is a document's content as Markdown (a board's notes and shapes).
-func (t *tools) text(m boards.Meta) (string, error) {
-	state, err := t.Store.LoadState(m.ID)
-	if err != nil {
-		return "", err
-	}
-	d, err := blocks.Load(state)
-	if err != nil {
-		return "", err
-	}
-	page := m.Mode == boards.ModePage
-	md := d.Markdown(page, t.link)
-	if !page {
-		if shapes := d.Shapes(); len(shapes) > 0 {
-			slices.Sort(shapes)
-			md += "\n## On the canvas\n\n- " + strings.Join(shapes, "\n- ") + "\n"
-		}
-	}
-	return md, nil
-}
-
 func (t *tools) link(id string) (string, string) {
 	title := "Untitled"
 	if m, err := t.Store.Get(id); err == nil {
@@ -194,10 +172,8 @@ func (t *tools) read(_ context.Context, _ *mcp.CallToolRequest, in readIn) (*mcp
 	if err != nil {
 		return nil, readOut{}, notFound(in.ID, err)
 	}
-	md, err := t.text(m)
-	if err != nil {
-		return nil, readOut{}, err
-	}
+	// Links to documents come with their URLs.
+	md := t.Store.Text(m, t.link)
 	d := t.doc(m)
 	return nil, readOut{Document: d, FolderPath: t.folderPath(d.Folder), Markdown: md}, nil
 }
@@ -316,11 +292,31 @@ func (t *tools) update(ctx context.Context, _ *mcp.CallToolRequest, in updateIn)
 		return nil, Document{}, err
 	}
 	id := docID(in.ID)
+	before, err := t.Store.Get(id)
+	if err != nil {
+		return nil, Document{}, notFound(in.ID, err)
+	}
 	m, upd, err := t.Store.Update(id, boards.Patch{Title: in.Title, Folder: in.Folder, Parent: in.Parent}, login)
 	if err != nil {
 		return nil, Document{}, notFound(in.ID, err)
 	}
 	t.live(ctx, id, upd)
+	// As in the sidebar: the new parent's body links to it, the old one's no
+	// longer does (a mention in its text stays, and shows as a shortcut).
+	if m.Parent != before.Parent {
+		if m.Parent != "" {
+			up, err := t.Store.Link(m.Parent, id, login)
+			if err != nil {
+				return nil, Document{}, err
+			}
+			t.live(ctx, m.Parent, up)
+		}
+		if before.Parent != "" {
+			if up, err := t.Store.Unlink(before.Parent, id, login); err == nil {
+				t.live(ctx, before.Parent, up)
+			}
+		}
+	}
 	return nil, t.doc(m), nil
 }
 

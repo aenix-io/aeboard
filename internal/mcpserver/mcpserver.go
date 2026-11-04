@@ -6,6 +6,7 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -52,7 +53,22 @@ func New(d Deps) *mcp.Server {
 		Instructions: instructions,
 	})
 	registerTools(s, d)
+	s.AddReceivingMiddleware(recoverPanics)
 	return s
+}
+
+// recoverPanics turns a panic in a tool into that call's error: the SDK
+// runs handlers on goroutines of its own, where a panic would end the
+// whole server.
+func recoverPanics(next mcp.MethodHandler) mcp.MethodHandler {
+	return func(ctx context.Context, method string, req mcp.Request) (res mcp.Result, err error) {
+		defer func() {
+			if p := recover(); p != nil {
+				res, err = nil, fmt.Errorf("internal error in %s: %v", method, p)
+			}
+		}()
+		return next(ctx, method, req)
+	}
 }
 
 const instructions = `aenotes holds pages (rich-text documents) and boards (whiteboards), arranged in folders. ` +
