@@ -5,7 +5,7 @@ A collaborative whiteboard and pages in one Go binary. The board editor is [Bloc
 - Shapes, connectors, text, pen, mind maps, frames, AFFiNE's board templates and stickers.
 - Live collaboration: edits, cursors and selections of everyone on the board.
 - Pages next to boards: rich text documents, linked with `@`, embedded in each other (as a card or inline), every document viewable as a board or as a page.
-- One list of boards and pages with tags (click a tag to filter, Shift-click to add more) and an All / Boards / Pages switch.
+- One list of pages and boards with tags (click a tag to filter, Shift-click to add more) and an All / Pages / Boards switch.
 - Boards in git: each board is its Yjs state plus a readable JSON dump, committed and pushed in the background; diverged replicas merge without conflicts.
 
 ## Run locally

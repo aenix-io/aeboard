@@ -77,7 +77,7 @@ export function BoardList({ canWrite, whoami }: { canWrite: boolean; whoami: Rea
   return (
     <div className="page">
       <header className="list-head">
-        <h1>Boards and pages</h1>
+        <h1>Pages and boards</h1>
         <div className="list-tools">
           {!empty && (
             <input
@@ -90,11 +90,11 @@ export function BoardList({ canWrite, whoami }: { canWrite: boolean; whoami: Rea
           )}
           {canWrite && (
             <>
-              <button type="button" className="primary" onClick={() => setCreating('edgeless')}>
-                New board
-              </button>
-              <button type="button" onClick={() => setCreating('page')}>
+              <button type="button" className="primary" onClick={() => setCreating('page')}>
                 New page
+              </button>
+              <button type="button" onClick={() => setCreating('edgeless')}>
+                New board
               </button>
             </>
           )}
@@ -136,11 +136,11 @@ export function BoardList({ canWrite, whoami }: { canWrite: boolean; whoami: Rea
           <p>Nothing here yet.</p>
           {canWrite && (
             <>
-              <button type="button" className="primary" onClick={() => setCreating('edgeless')}>
-                Create the first board
+              <button type="button" className="primary" onClick={() => setCreating('page')}>
+                Create the first page
               </button>{' '}
-              <button type="button" onClick={() => setCreating('page')}>
-                or a page
+              <button type="button" onClick={() => setCreating('edgeless')}>
+                or a board
               </button>
             </>
           )}
@@ -247,8 +247,8 @@ type Mode = 'edgeless' | 'page';
 
 const KINDS: Array<[KindFilter, string]> = [
   ['all', 'All'],
-  ['edgeless', 'Boards'],
   ['page', 'Pages'],
+  ['edgeless', 'Boards'],
 ];
 
 const KIND_KEY = 'aeboard.kindFilter';
