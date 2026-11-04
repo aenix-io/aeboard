@@ -13,6 +13,7 @@ import { Subject } from 'rxjs';
 
 import { api } from '../api';
 import { ServerBlobSource } from './blobs';
+import { ToastNotifications } from './notifications';
 import { registerTemplates } from './templates';
 import { type CatalogEntry, DocsWorkspace, type LiveDoc } from './workspace';
 
@@ -126,8 +127,8 @@ export async function openDoc(id: string, user: User, mount: HTMLElement, opts: 
 
   const editor = new TestAffineEditorContainer();
   editor.doc = store;
-  editor.pageSpecs = [...getTestViewManager().get('page'), DocModeExtension(modes)];
-  editor.edgelessSpecs = [...getTestViewManager().get('edgeless'), DocModeExtension(modes)];
+  editor.pageSpecs = [...getTestViewManager().get('page'), DocModeExtension(modes), ToastNotifications];
+  editor.edgelessSpecs = [...getTestViewManager().get('edgeless'), DocModeExtension(modes), ToastNotifications];
   editor.mode = mode;
   mount.replaceChildren(editor);
 
