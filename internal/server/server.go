@@ -116,6 +116,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/status", s.getStatus)
 	mux.HandleFunc("GET /api/v1/status/events", s.statusEvents)
 	mux.HandleFunc("GET /api/v1/boards", s.listBoards)
+	mux.HandleFunc("GET /api/v1/search", s.search)
 	mux.HandleFunc("POST /api/v1/boards", s.createBoard)
 	mux.HandleFunc("GET /api/v1/boards/{id}", s.getBoard)
 	mux.HandleFunc("PATCH /api/v1/boards/{id}", s.patchBoard)
@@ -259,6 +260,13 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 		s.ApplyRemote(r.Context(), map[string][]byte{m.ID: upd})
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// search finds documents by title and text (?q=).
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, struct {
+		Hits []boards.Hit `json:"hits"`
+	}{s.store.Search(r.URL.Query().Get("q"))})
 }
 
 // deleteBoard deletes a trashed document for good (moving to the trash and

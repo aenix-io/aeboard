@@ -120,50 +120,17 @@ type searchOut struct {
 }
 
 func (t *tools) search(_ context.Context, _ *mcp.CallToolRequest, in searchIn) (*mcp.CallToolResult, searchOut, error) {
-	q := strings.ToLower(strings.TrimSpace(in.Query))
-	if q == "" {
+	if strings.TrimSpace(in.Query) == "" {
 		return nil, searchOut{}, errors.New("query is empty")
 	}
 	out := searchOut{Matches: []Match{}}
-	for _, m := range t.Store.List() {
-		if !m.Trashed.IsZero() {
-			continue
-		}
-		hit := strings.Contains(strings.ToLower(m.Title), q)
-		snippet := ""
-		if text, err := t.text(m); err == nil {
-			if i := strings.Index(strings.ToLower(text), q); i >= 0 {
-				hit = true
-				snippet = around(text, i, len(q))
-			}
-		}
-		if hit {
-			out.Matches = append(out.Matches, Match{Document: t.doc(m), Snippet: snippet})
+	for _, h := range t.Store.Search(in.Query) {
+		if m, err := t.Store.Get(h.ID); err == nil {
+			out.Matches = append(out.Matches, Match{Document: t.doc(m), Snippet: h.Snippet})
 		}
 	}
 	return nil, out, nil
 }
-
-// around cuts ~80 bytes either side of a hit, on rune boundaries, on one line.
-func around(s string, at, n int) string {
-	from, to := max(0, at-80), min(len(s), at+n+80)
-	for from > 0 && !utf8Start(s[from]) {
-		from--
-	}
-	for to < len(s) && !utf8Start(s[to]) {
-		to++
-	}
-	out := strings.Join(strings.Fields(s[from:to]), " ")
-	if from > 0 {
-		out = "…" + out
-	}
-	if to < len(s) {
-		out += "…"
-	}
-	return out
-}
-
-func utf8Start(b byte) bool { return b&0xC0 != 0x80 }
 
 // text is a document's content as Markdown (a board's notes and shapes).
 func (t *tools) text(m boards.Meta) (string, error) {

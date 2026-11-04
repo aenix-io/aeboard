@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/aenix-io/aenotes/internal/blocks"
 )
 
 // Linking puts a reference at the end of the parent's body; the catalog
@@ -121,5 +124,32 @@ func TestHomesAndCopies(t *testing.T) {
 	}
 	if got := s.Links()[other.ID]; !slices.Equal(got, []string{cp.ID}) {
 		t.Fatalf("links after copy: %v", got)
+	}
+}
+
+// Search finds titles and text; the default mode can be changed.
+func TestSearchAndMode(t *testing.T) {
+	s := open(t, DirBackend{Root: t.TempDir()})
+	a, _ := s.Create(CreateInput{Mode: ModePage, Title: "Roadmap"}, "")
+	b, _ := s.Create(CreateInput{Mode: ModePage, Title: "Notes"}, "")
+	if _, err := s.Append(b.ID, blocks.Parse("Ship the **roadmap** today."), ""); err != nil {
+		t.Fatal(err)
+	}
+	hits := s.Search("ROADMAP")
+	if len(hits) != 2 {
+		t.Fatalf("hits: %+v", hits)
+	}
+	for _, h := range hits {
+		if h.ID == b.ID && !strings.Contains(h.Snippet, "roadmap") {
+			t.Fatalf("snippet: %+v", h)
+		}
+	}
+	mode := ModeEdgeless
+	if m, _, err := s.Update(a.ID, Patch{Mode: &mode}, ""); err != nil || m.Mode != ModeEdgeless {
+		t.Fatalf("mode: %+v %v", m, err)
+	}
+	bad := "wide"
+	if _, _, err := s.Update(a.ID, Patch{Mode: &bad}, ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("bad mode: %v", err)
 	}
 }

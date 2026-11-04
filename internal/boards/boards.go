@@ -108,6 +108,8 @@ type Patch struct {
 	Rank *string `json:"rank,omitempty"`
 	// Trashed moves the document to the trash (true) or restores it.
 	Trashed *bool `json:"trashed,omitempty"`
+	// Mode is how the document opens by default (edgeless or page).
+	Mode *string `json:"mode,omitempty"`
 }
 
 // Snapshot is one board as a backend stores it.
@@ -360,6 +362,13 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 			return Meta{}, nil, fmt.Errorf("%w: rank %q", ErrInvalid, *p.Rank)
 		}
 		m.Rank = *p.Rank
+	}
+	if p.Mode != nil {
+		if *p.Mode != ModeEdgeless && *p.Mode != ModePage {
+			s.mu.Unlock()
+			return Meta{}, nil, fmt.Errorf("%w: mode %q", ErrInvalid, *p.Mode)
+		}
+		m.Mode = *p.Mode
 	}
 	if p.Trashed != nil {
 		if *p.Trashed {
