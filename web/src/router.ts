@@ -1,19 +1,13 @@
 import { useEffect, useState } from 'react';
 
-// The routes, over the History API: "/" (the top level), "/f/<id>" (a
-// folder) and "/b/<id>" (a document).
-export type Route = { name: 'list'; folder: string } | { name: 'board'; id: string };
+// The routes, over the History API: "/" (every document) and "/b/<id>" (a
+// document). Folders have no page of their own: in the sidebar they only
+// expand and collapse (AFFiNE's way), so an old /f/<id> link shows "/".
+export type Route = { name: 'list' } | { name: 'board'; id: string };
 
 export function parseRoute(path: string): Route {
   const b = /^\/b\/([0-9a-z]+)\/?$/.exec(path);
-  if (b) return { name: 'board', id: b[1] };
-  const f = /^\/f\/([0-9a-z]+)\/?$/.exec(path);
-  return { name: 'list', folder: f ? f[1] : '' };
-}
-
-/** folderPath is the URL of a folder ("" is the top level). */
-export function folderPath(id: string): string {
-  return id ? `/f/${id}` : '/';
+  return b ? { name: 'board', id: b[1] } : { name: 'list' };
 }
 
 export function navigate(path: string): void {

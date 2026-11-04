@@ -7,6 +7,8 @@ export interface Board {
   /** The folder the document is in; "" is the top level. */
   folder: string;
   rank?: string;
+  /** The documents this one links to: its children in the sidebar. */
+  links?: string[];
   created: string;
   updated: string;
 }
@@ -97,6 +99,8 @@ export const api = {
     call<Board>('POST', '/boards', doc),
   updateBoard: (id: string, patch: { title?: string; folder?: string; rank?: string }) =>
     call<Board>('PATCH', `/boards/${id}`, patch),
+  /** addChild puts doc inside parent: a link to it at the end of parent. */
+  addChild: (parent: string, doc: string) => call<void>('POST', `/boards/${parent}/children`, { doc }),
   createFolder: (name: string, parent: string) => call<Folder>('POST', '/folders', { name, parent }),
   updateFolder: (id: string, patch: { name?: string; parent?: string; rank?: string }) =>
     call<Folder>('PATCH', `/folders/${id}`, patch),

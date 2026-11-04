@@ -3,7 +3,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, type Board, type Folder } from './api';
-import { canMoveFolder, placeAt } from './library';
+import { canMoveFolder, placeAt, topLevel } from './library';
 
 export type Mode = 'edgeless' | 'page';
 
@@ -36,6 +36,12 @@ export interface Catalog {
    *  without the item): the order people set by dragging. */
   place(item: Dragged, parent: string, index: number): Promise<void>;
   createDoc(mode: Mode, folder: string, title?: string): Promise<Board>;
+  /** createChild makes a new document inside parent (linked from it). */
+  createChild(mode: Mode, parent: string): Promise<Board>;
+  /** acceptsChild reports whether doc may be put inside parent. */
+  acceptsChild(item: Dragged | null, parent: string): boolean;
+  /** addChild puts an existing document inside parent. */
+  addChild(parent: string, doc: string): Promise<void>;
   createFolder(name: string, parent: string): Promise<Folder>;
   renameFolder(id: string, name: string): Promise<void>;
   deleteFolder(id: string): Promise<void>;
@@ -134,7 +140,9 @@ export function CatalogProvider({
         }),
       place: (item, parent, index) =>
         act(async () => {
-          const ps = placeAt(folders, docs ?? [], parent, item, index);
+          // The order is among what the level shows: documents nested in
+          // another one are not at the top.
+          const ps = placeAt(folders, topLevel(folders, docs ?? []), parent, item, index);
           const rankOf = (kind: string, id: string) => ps.find(p => p.kind === kind && p.id === id)?.rank;
           // Show the new order at once; the reload confirms it.
           setDocs(
@@ -159,6 +167,22 @@ export function CatalogProvider({
           }
         }),
       createDoc: (mode, folder, title = '') => act(() => api.createBoard({ mode, folder, title })),
+      createChild: (mode, parent) =>
+        act(async () => {
+          const b = await api.createBoard({ mode });
+          await api.addChild(parent, b.id);
+          return b;
+        }),
+      acceptsChild: (item, parent) => {
+        if (!item || !canWrite || item.kind !== 'doc' || item.id === parent) return false;
+        return !(docs?.find(d => d.id === parent)?.links ?? []).includes(item.id);
+      },
+      addChild: (parent, doc) =>
+        act(async () => {
+          // Show it inside at once; the reload confirms it.
+          setDocs(ds => ds?.map(d => (d.id === parent ? { ...d, links: [...(d.links ?? []), doc] } : d)) ?? ds);
+          await api.addChild(parent, doc);
+        }),
       createFolder: (name, parent) => act(() => api.createFolder(name, parent)),
       renameFolder: (id, name) => act(async () => void (await api.updateFolder(id, { name }))),
       deleteFolder: id => act(() => api.deleteFolder(id)),

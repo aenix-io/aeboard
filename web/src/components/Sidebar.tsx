@@ -2,8 +2,8 @@ import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef
 
 import type { Board, Folder } from '../api';
 import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../catalog';
-import { type Entry, entriesOf, pathOf } from '../library';
-import { folderPath, navigate, type Route } from '../router';
+import { childrenOf, type Entry, entriesOf, pathOf, topLevel } from '../library';
+import { navigate, type Route } from '../router';
 import { untitled } from './BoardPage';
 import { BoardIcon, FolderIcon, McpIcon, PageIcon } from './icons';
 import { McpDialog } from './McpDialog';
@@ -27,8 +27,11 @@ function saveExpanded(s: Set<string>) {
   }
 }
 
-/** Sidebar is the Notion-style tree of folders, pages and boards: expand
- *  folders in place, create anything anywhere from "+", drag to move. */
+/** Sidebar is the tree of folders, pages and boards, after AFFiNE's: a
+ *  folder only expands and collapses; a document opens, and expands to the
+ *  documents it links to — its children. "+" creates anything anywhere (in
+ *  a document: a new page linked from it), dragging moves, and dropping a
+ *  document on another one's middle puts it inside (links it from there). */
 export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   const cat = useCatalog();
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -45,8 +48,10 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   const [renaming, setRenaming] = useState<string | null>(null);
 
   const docs = useMemo(() => cat.docs ?? [], [cat.docs]);
+  // What the levels list: documents nested in another one show only there.
+  const placed = useMemo(() => topLevel(cat.folders, docs), [cat.folders, docs]);
   const currentDoc = route.name === 'board' ? route.id : '';
-  const currentFolder = route.name === 'list' ? route.folder : (docs.find(d => d.id === currentDoc)?.folder ?? '');
+  const currentFolder = docs.find(d => d.id === currentDoc)?.folder ?? '';
 
   // Open the way down to where the visitor is.
   useEffect(() => {
@@ -76,14 +81,31 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     }
   };
 
+  const createChild = async (mode: Mode, parent: string, node: string) => {
+    toggle(node, true);
+    try {
+      const b = await cat.createChild(mode, parent);
+      navigate(`/b/${b.id}`);
+    } catch {
+      /* shown by the catalog's error */
+    }
+  };
+
+  // The item being dragged from here: a drop target needs it while the drag
+  // is over it, when the browser keeps the drag data unreadable.
+  const dragging = useRef<Dragged | null>(null);
   const drag = (item: Dragged) =>
     cat.canWrite
       ? {
           draggable: true,
           onDragStart: (e: DragEvent) => {
             e.stopPropagation();
+            dragging.current = item;
             e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(item));
             e.dataTransfer.effectAllowed = 'move';
+          },
+          onDragEnd: () => {
+            dragging.current = null;
           },
         }
       : {};
@@ -116,7 +138,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   };
 
   const renderLevel = (parent: string, depth: number): ReactNode => {
-    const entries = entriesOf(cat.folders, docs, parent);
+    const entries = entriesOf(cat.folders, placed, parent);
     return (
       <>
         {newFolderIn === parent && (
@@ -130,7 +152,9 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
             }}
           />
         )}
-        {entries.map(e => (e.kind === 'folder' ? folderRow(e.folder, depth, parent) : docRow(e.doc, depth, parent)))}
+        {entries.map(e =>
+          e.kind === 'folder' ? folderRow(e.folder, depth, parent) : docRow(e.doc, depth, { parent, node: `d:${e.id}` }),
+        )}
         {entries.length === 0 && newFolderIn !== parent && depth > 0 && (
           <div className="sb-empty" style={{ paddingLeft: indent(depth) + 22 }}>
             Empty
@@ -142,8 +166,10 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
 
   // rowDrop makes a row take drops: on its top or bottom edge the dragged
   // item goes before or after it (in the row's folder), on a folder's middle
-  // into that folder, on an open folder's bottom edge in as its first entry.
-  const rowDrop = (entry: { kind: 'folder' | 'doc'; id: string }, parent: string) => ({
+  // into that folder, on an open folder's bottom edge in as its first entry,
+  // on a document's middle inside that document. A document shown inside
+  // another (linked: its place is the parent's text) only takes "into".
+  const rowDrop = (entry: { kind: 'folder' | 'doc'; id: string }, parent: string, linked = false) => ({
     onDragOver: (e: DragEvent<HTMLDivElement>) => {
       if (!cat.canWrite || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
       e.preventDefault();
@@ -151,9 +177,13 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       e.dataTransfer.dropEffect = 'move';
       const r = e.currentTarget.getBoundingClientRect();
       const y = (e.clientY - r.top) / r.height;
-      let pos: DropPos =
-        entry.kind === 'folder' ? (y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into') : y < 0.5 ? 'before' : 'after';
+      let pos: DropPos = linked ? 'into' : y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into';
       if (pos === 'after' && entry.kind === 'folder' && expanded.has(entry.id)) pos = 'first';
+      if (pos === 'into' && entry.kind === 'doc' && dragging.current && !cat.acceptsChild(dragging.current, entry.id)) {
+        e.dataTransfer.dropEffect = 'none';
+        setDropAt(d => (d?.id === entry.id ? null : d));
+        return;
+      }
       setDropAt(d => (d?.id === entry.id && d.pos === pos ? d : { id: entry.id, pos }));
     },
     onDragLeave: (e: DragEvent<HTMLDivElement>) => {
@@ -167,6 +197,10 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       setDropAt(null);
       const item = dragData(e);
       if (!item || !at || at.id !== entry.id || (item.kind === entry.kind && item.id === entry.id)) return;
+      if (at.pos === 'into' && entry.kind === 'doc') {
+        if (cat.acceptsChild(item, entry.id)) void cat.addChild(entry.id, item.id).catch(() => {});
+        return;
+      }
       if (at.pos === 'into') {
         if (cat.accepts(item, entry.id)) {
           toggle(entry.id, true);
@@ -181,7 +215,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       }
       // A folder may not go below itself.
       if (item.kind === 'folder' && (parent === item.id || pathOf(cat.folders, parent).some(f => f.id === item.id))) return;
-      const siblings = entriesOf(cat.folders, docs, parent).filter(
+      const siblings = entriesOf(cat.folders, placed, parent).filter(
         (x: Entry) => !(x.kind === item.kind && x.id === item.id),
       );
       const i = siblings.findIndex(x => x.kind === entry.kind && x.id === entry.id);
@@ -225,7 +259,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     return (
       <div key={f.id} className="sb-node">
         <div
-          className={`sb-row${currentFolder === f.id && route.name === 'list' ? ' sb-active' : ''}`}
+          className="sb-row"
           style={{ paddingLeft: indent(depth) }}
           {...drag({ kind: 'folder', id: f.id })}
           {...rowDrop({ kind: 'folder', id: f.id }, parent)}
@@ -240,12 +274,12 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           >
             {open ? '▾' : '▸'}
           </button>
-          <a className="sb-label" href={folderPath(f.id)} onClick={go(folderPath(f.id))}>
+          <button type="button" className="sb-label sb-folder-label" aria-expanded={open} onClick={() => toggle(f.id)}>
             <span className="kind kind-folder">
               <FolderIcon />
             </span>
             <span className="sb-name">{f.name}</span>
-          </a>
+          </button>
           {cat.canWrite && (
             <span className="sb-actions">
               <RowMenu
@@ -279,22 +313,68 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     );
   };
 
-  const docRow = (d: Board, depth: number, parent: string) => (
-    <div
-      key={d.id}
-      className={`sb-row${d.id === currentDoc ? ' sb-active' : ''}`}
-      style={{ paddingLeft: indent(depth) }}
-      {...drag({ kind: 'doc', id: d.id })}
-      {...rowDrop({ kind: 'doc', id: d.id }, parent)}
-    >
-      {dropLine(d.id, depth)}
-      <span className="sb-caret sb-caret-none" />
-      <a className="sb-label" href={`/b/${d.id}`} onClick={go(`/b/${d.id}`)}>
-        <span className={`kind kind-${d.mode}`}>{d.mode === 'page' ? <PageIcon /> : <BoardIcon />}</span>
-        <span className={`sb-name${d.title ? '' : ' sb-untitled'}`}>{d.title || untitled(d.mode)}</span>
-      </a>
-    </div>
-  );
+  // docRow is a document and, expanded, the documents it links to. `at` is
+  // where it shows: the folder level (parent) or inside another document
+  // (linked); node keys its expanded state, per place it shows in.
+  const docRow = (d: Board, depth: number, at: { parent: string; node: string; linked?: boolean; above?: Set<string> }) => {
+    const above = at.above ?? new Set<string>();
+    // A document already open above (a cycle) does not repeat below itself.
+    const kids = childrenOf(docs, d).filter(c => !above.has(c.id) && c.id !== d.id);
+    const open = kids.length > 0 && expanded.has(at.node);
+    const label = d.title || untitled(d.mode);
+    return (
+      <div key={at.node} className="sb-node">
+        <div
+          className={`sb-row${d.id === currentDoc ? ' sb-active' : ''}`}
+          style={{ paddingLeft: indent(depth) }}
+          {...drag({ kind: 'doc', id: d.id })}
+          {...rowDrop({ kind: 'doc', id: d.id }, at.parent, at.linked)}
+        >
+          {dropLine(d.id, depth)}
+          {kids.length > 0 ? (
+            <button
+              type="button"
+              className="sb-caret"
+              aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+              aria-expanded={open}
+              onClick={() => toggle(at.node)}
+            >
+              {open ? '▾' : '▸'}
+            </button>
+          ) : (
+            <span className="sb-caret sb-caret-none" />
+          )}
+          <a className="sb-label" href={`/b/${d.id}`} onClick={go(`/b/${d.id}`)}>
+            <span className={`kind kind-${d.mode}${at.linked ? ' kind-linked' : ''}`}>
+              {d.mode === 'page' ? <PageIcon /> : <BoardIcon />}
+            </span>
+            <span className={`sb-name${d.title ? '' : ' sb-untitled'}`}>{label}</span>
+          </a>
+          {cat.canWrite && (
+            <span className="sb-actions">
+              <RowMenu
+                label="Add inside"
+                glyph="+"
+                items={[
+                  ['New page inside', () => void createChild('page', d.id, at.node)],
+                  ['New board inside', () => void createChild('edgeless', d.id, at.node)],
+                ]}
+              />
+            </span>
+          )}
+        </div>
+        {open &&
+          kids.map(c =>
+            docRow(c, depth + 1, {
+              parent: d.id,
+              node: `${at.node}/${c.id}`,
+              linked: true,
+              above: new Set([...above, d.id]),
+            }),
+          )}
+      </div>
+    );
+  };
 
   return (
     <aside className="sidebar" aria-label="Pages and boards">

@@ -4,8 +4,7 @@ import type { DocSession } from '../board/editor';
 import { useCatalog } from '../catalog';
 
 import { api, type Board } from '../api';
-import { pathOf } from '../library';
-import { folderPath, navigate } from '../router';
+import { navigate } from '../router';
 
 interface Props {
   id: string;
@@ -25,8 +24,8 @@ function viewFromURL(): View | undefined {
   return v === 'page' || v === 'edgeless' ? v : undefined;
 }
 
-/** BoardPage is one document — a board or a page: a slim header (title,
- *  its folder, the Board/Page switch) over the editor. */
+/** BoardPage is one document — a board or a page: a slim header (the
+ *  title and the Board/Page switch, as AFFiNE's) over the editor. */
 export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
   const cat = useCatalog();
   const [board, setBoard] = useState<Board | null>(null);
@@ -35,9 +34,6 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const mount = useRef<HTMLDivElement>(null);
-  const folders = cat.folders;
-  // Where the document is now: a move in the sidebar shows here at once.
-  const docFolder = cat.docs?.find(d => d.id === id)?.folder ?? board?.folder ?? '';
 
   useEffect(() => {
     api
@@ -132,45 +128,6 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
     <div className="board-page">
       <header className="board-head">
         {lead}
-        <a
-          href={folderPath(docFolder)}
-          className="back"
-          onClick={e => {
-            e.preventDefault();
-            navigate(folderPath(docFolder));
-          }}
-        >
-          ←
-        </a>
-        <nav className="crumbs crumbs-small" aria-label="Folder">
-          <a
-            href="/"
-            className="crumb"
-            onClick={e => {
-              e.preventDefault();
-              navigate('/');
-            }}
-          >
-            All
-          </a>
-          {board &&
-            pathOf(folders, docFolder).map(f => (
-              <span key={f.id} className="crumb-sep-wrap">
-                <span className="crumb-sep">/</span>
-                <a
-                  href={folderPath(f.id)}
-                  className="crumb"
-                  onClick={e => {
-                    e.preventDefault();
-                    navigate(folderPath(f.id));
-                  }}
-                >
-                  {f.name}
-                </a>
-              </span>
-            ))}
-          <span className="crumb-sep">/</span>
-        </nav>
         {board && !canWrite && (
           <>
             <h1 className="title-input title-static">{board.title || untitled(board.mode)}</h1>

@@ -91,7 +91,7 @@ function Boards({
               whoami={whoami}
             />
           ) : (
-            <BoardList key={route.folder} folder={route.folder} lead={lead} whoami={whoami} />
+            <BoardList lead={lead} whoami={whoami} />
           )}
         </main>
       </div>

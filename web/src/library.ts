@@ -16,6 +16,8 @@ export interface DocNode {
   mode: 'edgeless' | 'page';
   folder: string;
   rank?: string;
+  /** The documents this one links to: its children. */
+  links?: string[];
 }
 
 /** An entry of a folder, folder or document, in the folder's order. */
@@ -147,4 +149,55 @@ export function placeAt(
     if (e === item || e.rank !== prev) out.push({ kind: e.kind, id: e.id, rank: prev });
   }
   return out;
+}
+
+/** childrenOf are the documents d links to that exist, in link order (as
+ *  AFFiNE's sidebar: a document's children are what its body links to). */
+export function childrenOf<D extends DocNode>(docs: D[], d: DocNode): D[] {
+  const byID = new Map(docs.map(x => [x.id, x]));
+  return (d.links ?? []).flatMap(id => {
+    const c = byID.get(id);
+    return c && c.id !== d.id ? [c] : [];
+  });
+}
+
+/** nestedAtTop are the top-level documents that show inside another
+ *  document instead: linked from one that is itself reachable from the top
+ *  or a folder. A cycle nobody else links into stays at the top, so nothing
+ *  disappears from the tree. */
+export function nestedAtTop(folders: FolderNode[], docs: DocNode[]): Set<string> {
+  const known = new Set(folders.map(f => f.id));
+  const top = (d: DocNode) => !known.has(d.folder);
+  const linked = new Set(docs.flatMap(d => (d.links ?? []).filter(l => l !== d.id)));
+  const byID = new Map(docs.map(d => [d.id, d]));
+  // Roots: everything in a folder, and top-level documents nobody links to.
+  const reached = new Set<string>();
+  const queue = docs.filter(d => !top(d) || !linked.has(d.id)).map(d => d.id);
+  const walk = () => {
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (reached.has(id)) continue;
+      reached.add(id);
+      for (const l of byID.get(id)?.links ?? []) if (byID.has(l) && !reached.has(l)) queue.push(l);
+    }
+  };
+  walk();
+  // What no root reaches is a closed cycle: its first member stands at the
+  // top and brings the rest in.
+  for (const d of docs) {
+    if (!reached.has(d.id)) {
+      queue.push(d.id);
+      reached.add('\0' + d.id); // marks d as a root below
+      walk();
+    }
+  }
+  const out = new Set<string>();
+  for (const d of docs) if (top(d) && linked.has(d.id) && !reached.has('\0' + d.id)) out.add(d.id);
+  return out;
+}
+
+/** topLevel is the documents the top level shows (see nestedAtTop). */
+export function topLevel<D extends DocNode>(folders: FolderNode[], docs: D[]): D[] {
+  const nested = nestedAtTop(folders, docs);
+  return docs.filter(d => !nested.has(d.id));
 }

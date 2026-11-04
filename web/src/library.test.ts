@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canMoveFolder, countIn, entriesOf, filterKind, inFolder, pathOf, placeAt, search } from './library';
+import { canMoveFolder, childrenOf, countIn, entriesOf, filterKind, inFolder, pathOf, placeAt, search, topLevel } from './library';
 
 // work/
 //   meetings/
@@ -108,5 +108,35 @@ describe('ordering', () => {
   it('a document moved into another folder takes a key there', () => {
     const ps = placeAt(fs, ds, 'f2', { kind: 'doc', id: 'd1' }, 0);
     expect(ps).toEqual([{ kind: 'doc', id: 'd1', rank: 'i' }]);
+  });
+});
+
+describe('documents inside documents', () => {
+  const doc = (id: string, links: string[] = [], folder = '') => ({ id, title: id, mode: 'page' as const, folder, links });
+  const folders = [{ id: 'f', name: 'F', parent: '' }];
+
+  it('lists the linked documents that exist, in link order', () => {
+    const docs = [doc('a', ['c', 'gone', 'a', 'b']), doc('b'), doc('c')];
+    expect(childrenOf(docs, docs[0]).map(d => d.id)).toEqual(['c', 'b']);
+  });
+
+  it('shows a linked document inside its parent, not at the top', () => {
+    const docs = [doc('a', ['b']), doc('b', ['c']), doc('c'), doc('d')];
+    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a', 'd']);
+  });
+
+  it('keeps a document in a folder there even when it is linked', () => {
+    const docs = [doc('a', ['b']), doc('b', [], 'f')];
+    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a', 'b']);
+  });
+
+  it('nests a top-level document linked from one in a folder', () => {
+    const docs = [doc('a', ['b'], 'f'), doc('b')];
+    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a']);
+  });
+
+  it('keeps one member of a closed cycle at the top', () => {
+    const docs = [doc('a', ['b']), doc('b', ['a'])];
+    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a']);
   });
 });
