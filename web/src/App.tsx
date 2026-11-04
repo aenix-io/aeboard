@@ -78,7 +78,8 @@ function Boards({
   }, []);
   // The sidebar's button stays in one place, the top left corner: in the
   // sidebar's head while it is open, over the page while it is not — where
-  // the page's header leaves room for it.
+  // a document's header leaves room for it (the lists' headers sit lower,
+  // clear of it).
   const lead = sidebar ? null : <span className="lead-space" aria-hidden="true" />;
   const userName = me?.login ?? name;
   const canWrite = !me || me.access === 'write';
@@ -113,9 +114,9 @@ function Boards({
               whoami={whoami}
             />
           ) : route.name === 'trash' ? (
-            <TrashList lead={lead} whoami={whoami} />
+            <TrashList whoami={whoami} />
           ) : (
-            <BoardList lead={lead} whoami={whoami} />
+            <BoardList whoami={whoami} />
           )}
         </main>
       </div>
