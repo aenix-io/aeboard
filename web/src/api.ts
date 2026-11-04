@@ -6,6 +6,8 @@ export interface Board {
   title: string;
   /** The folder the document is in; "" is the top level. */
   folder: string;
+  /** The document this one lives inside (its folder is "" then). */
+  parent?: string;
   rank?: string;
   /** When the document was moved to the trash; absent when it is not. */
   trashed?: string;
@@ -97,10 +99,20 @@ export const api = {
   },
   listBoards: () => call<BoardList>('GET', '/boards'),
   getBoard: (id: string) => call<Board>('GET', `/boards/${id}`),
-  createBoard: (doc: { id?: string; mode?: 'edgeless' | 'page'; title?: string; folder?: string; blank?: boolean }) =>
+  createBoard: (doc: {
+    id?: string;
+    mode?: 'edgeless' | 'page';
+    title?: string;
+    folder?: string;
+    parent?: string;
+    blank?: boolean;
+  }) =>
     call<Board>('POST', '/boards', doc),
-  updateBoard: (id: string, patch: { title?: string; folder?: string; rank?: string; trashed?: boolean }) =>
+  updateBoard: (id: string, patch: { title?: string; folder?: string; parent?: string; rank?: string; trashed?: boolean }) =>
     call<Board>('PATCH', `/boards/${id}`, patch),
+  /** copyBoard makes a separate copy of doc inside into, in place of the
+   *  shortcut to it there. */
+  copyBoard: (id: string, into: string) => call<Board>('POST', `/boards/${id}/copy`, { into }),
   /** deleteBoard deletes a trashed document for good. */
   deleteBoard: (id: string) => call<void>('DELETE', `/boards/${id}`),
   /** addChild puts doc inside parent: a link to it at the end of parent. */

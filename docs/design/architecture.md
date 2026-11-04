@@ -50,7 +50,7 @@ A page created from the `@` menu is built by BlockSuite in the creating browser 
 Each board is a directory, identical in the plain-file and the git backend:
 
 ```
-boards/<id>/board.json   mode, title, folder, created/updated, trashed/deleted
+boards/<id>/board.json   mode, title, folder or parent, created/updated, trashed/deleted
 folders.json             the folder tree
 boards/<id>/state.jsonl  the Yjs state as text — the source of truth
 boards/<id>/doc.json     the "blocks" map as sorted, indented JSON — for people and diffs, never read back
@@ -58,7 +58,7 @@ boards/<id>/doc.json     the "blocks" map as sorted, indented JSON — for peopl
 
 **Folders** are metadata, not directories. The tree is one `folders.json` at the repository root (id, name, parent), and each document names its folder in `board.json`. Documents stay in the flat `boards/<id>/`, so moving a document or a whole folder is a one-line change, and links between documents never break. Only an empty folder can be deleted, and it stays in the file as a tombstone, so a merge with a replica that still has it cannot bring it back. Replicas merge the tree folder by folder, and the copy changed last wins. A document that one replica moved into a folder another replica deleted shows at the top level.
 
-**Documents nest by linking**, the AFFiNE way: a document's children are the documents its body links to, in the order of the links (references in text and linked or synced doc cards). Nothing about it is stored apart from the documents themselves: the server derives each document's links from its state whenever it changes and lists them in the catalog. Putting a document inside another one adds a line with a reference to it at the end of the parent's body. In the sidebar, a top-level document that another document links to shows only inside that one; a cycle nobody else links into keeps one member at the top.
+**Every document has one home**: a folder (or the top level), or a parent document it lives inside (`parent` in `board.json`, which then has no folder). A document cannot go inside itself or one below it. Its own children are ordered by rank like a folder's contents. **Links are shortcuts**: the server derives each document's links from its state whenever it changes (references in text and linked or synced doc cards) and lists them in the catalog; a document a document links to that lives elsewhere shows inside it as a shortcut. Putting a document inside another adds a line with a reference to it at the end of the parent's body, and moving it out removes that line (a mention inside the text is the author's, and stays a shortcut). A shortcut can become the original — the document's home moves there and where it lived keeps a link — or a separate copy that takes the shortcut's place.
 
 **The trash** is a flag on `board.json` (`trashed`): a trashed document is kept whole, leaves the tree and the lists, and can be restored. Deleting from the trash leaves a tombstone (`deleted`, no state files), so a replica that still has the document learns it is gone; an edit made after the deletion on another replica wins over it, the way the later metadata wins everywhere else. Links to a deleted document in other documents are left as they are.
 

@@ -4,6 +4,7 @@ import type { DocSession } from '../board/editor';
 import { useCatalog } from '../catalog';
 
 import { api, type Board } from '../api';
+import { homePath } from '../library';
 import { navigate } from '../router';
 import { Confirm } from './Confirm';
 
@@ -23,6 +24,43 @@ type View = 'edgeless' | 'page';
 function viewFromURL(): View | undefined {
   const v = new URLSearchParams(location.search).get('view');
   return v === 'page' || v === 'edgeless' ? v : undefined;
+}
+
+/** DocPath is the header's way down to the document: the folders and
+ *  documents above the row the visitor opened it from in the sidebar, or
+ *  above its own place. Opened from a shortcut, it also offers the way to
+ *  the original. */
+function DocPath({ id }: { id: string }) {
+  const cat = useCatalog();
+  const trail = cat.trail?.doc === id ? cat.trail : null;
+  const path = trail ? trail.path : homePath(cat.folders, cat.docs ?? [], id);
+  const open = (doc: string) => (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    cat.setTrail(null);
+    navigate(`/b/${doc}`);
+  };
+  return (
+    <nav className="doc-crumbs" aria-label="Path">
+      {path.map(c => (
+        <span key={`${c.kind}:${c.id}`} className="crumb-sep-wrap">
+          {c.kind === 'doc' ? (
+            <a href={`/b/${c.id}`} onClick={open(c.id)}>
+              {c.name || 'Untitled'}
+            </a>
+          ) : (
+            <span className="crumb-folder">{c.name}</span>
+          )}
+          <span className="crumb-sep"> / </span>
+        </span>
+      ))}
+      {trail?.shortcut && (
+        <a className="to-original" href={`/b/${id}`} onClick={open(id)} title="Show where this document lives">
+          ↗ Go to original
+        </a>
+      )}
+    </nav>
+  );
 }
 
 /** BoardPage is one document — a board or a page: a slim header (the
@@ -132,6 +170,7 @@ export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
     <div className="board-page">
       <header className="board-head">
         {lead}
+        {board && <DocPath id={id} />}
         {board && !canWrite && (
           <>
             <h1 className="title-input title-static">{board.title || untitled(board.mode)}</h1>

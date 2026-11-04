@@ -41,3 +41,14 @@ export function TrashIcon() {
     </svg>
   );
 }
+
+/** ShortcutBadge is the arrow on a shortcut's icon: a link to a document
+ *  that lives elsewhere. */
+export function ShortcutBadge() {
+  return (
+    <svg className="shortcut-badge" width="10" height="10" viewBox="0 0 12 12" aria-label="Shortcut">
+      <rect x="0.5" y="0.5" width="11" height="11" rx="2.5" fill="var(--bg)" stroke="currentColor" />
+      <path d="M4 8.2 8 4.2M5 4h3.2v3.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}

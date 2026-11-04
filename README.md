@@ -5,8 +5,8 @@ A collaborative whiteboard and pages in one Go binary. The board editor is [Bloc
 - Shapes, connectors, text, pen, mind maps, frames, AFFiNE's board templates and stickers.
 - Live collaboration: edits, cursors and selections of everyone on the board.
 - Pages next to boards: rich text documents, linked with `@`, embedded in each other (as a card or inline), every document viewable as a board or as a page.
-- Documents inside documents, as in AFFiNE: a document's children are the documents its body links to (@-mentions and linked-doc cards). "+" on a document creates a page or board inside it, and dropping a document on another one puts it inside; both add a link at the end of the parent's body.
-- A sidebar with the whole tree (the browser remembers whether it is open): folders that expand and collapse, documents that expand to their children, drag to order and move.
+- Documents inside documents. Every document has one place — a folder, the top level or inside another document — and the documents a document links to that live elsewhere show inside it as shortcuts. A shortcut can become the original (the document moves there and leaves a shortcut where it was) or a separate copy.
+- A sidebar with the whole tree (the browser remembers whether it is open): folders that expand and collapse, documents that expand to what is inside them, drag to order and move. The header shows the path to the open document: the one it was opened from in the sidebar, with a way to the original when that was a shortcut.
 - A start page listing every document, with search and an All / Pages / Boards switch.
 - A trash: a deleted document is kept and can be restored, or deleted for good from the trash.
 - Boards in git: each board is its Yjs state plus a readable JSON dump, committed and pushed in the background; diverged replicas merge without conflicts.

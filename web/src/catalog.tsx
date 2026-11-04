@@ -3,37 +3,44 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, type Board, type Folder } from './api';
-import { canMoveFolder, placeAt, topLevel } from './library';
+import { atFolderLevel, canMoveFolder, type Crumb, inside, placeAmong, placeAt, type Placement } from './library';
 
 export type Mode = 'edgeless' | 'page';
 
-/** What is being dragged: a document or a folder. from is the document a
- *  document is dragged out of (it shows inside it), so a move takes it out. */
-export type Dragged = { kind: 'doc' | 'folder'; id: string; from?: string };
+/** What is being dragged: a folder, a document, or a shortcut to one (a
+ *  link from another document). from is the document it is dragged out of:
+ *  its parent, or for a shortcut the document that links to it. */
+export type Dragged = { kind: 'doc' | 'folder'; id: string; from?: string; shortcut?: boolean };
 
 export const DRAG_TYPE = 'application/x-aenotes-item';
-
-const EXPECT_CHILD = 'aenotes:expect-child';
-/** How long a link announced by expectChild is shown before the server
- *  must have it. */
-const EXPECT_MS = 15_000;
-
-/** expectChild announces that child is about to be linked from parent (a
- *  document the editor creates from inside another): the catalog shows it
- *  there until the server's own list has the link. */
-export function expectChild(parent: string, child: string): void {
-  window.dispatchEvent(new CustomEvent(EXPECT_CHILD, { detail: { parent, child } }));
-}
 
 export function dragData(e: React.DragEvent): Dragged | null {
   try {
     const v = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)) as Dragged;
     if (!v || (v.kind !== 'doc' && v.kind !== 'folder') || typeof v.id !== 'string') return null;
-    return { kind: v.kind, id: v.id, from: typeof v.from === 'string' ? v.from : undefined };
+    return {
+      kind: v.kind,
+      id: v.id,
+      from: typeof v.from === 'string' ? v.from : undefined,
+      shortcut: v.shortcut === true,
+    };
   } catch {
     return null;
   }
 }
+
+/** Trail is the way the visitor came to the open document in the sidebar:
+ *  the row they clicked (node) and the folders and documents above it. */
+export interface Trail {
+  doc: string;
+  node: string;
+  path: Crumb[];
+  /** The row was a shortcut, not the document's own place. */
+  shortcut: boolean;
+}
+
+/** Where a link goes among a document's shortcuts. */
+export type LinkPlace = { before?: string; after?: string; first?: boolean };
 
 export interface Catalog {
   /** The documents, those in the trash left out. */
@@ -46,23 +53,30 @@ export interface Catalog {
   reload(): void;
   /** patchDoc updates a document in place (a title typed in the editor). */
   patchDoc(id: string, patch: Partial<Board>): void;
-  /** accepts reports whether item may be dropped into target ("" = top). */
+  trail: Trail | null;
+  setTrail(t: Trail | null): void;
+  /** accepts reports whether item may be dropped into folder target. */
   accepts(item: Dragged | null, target: string): boolean;
   move(item: Dragged, target: string): Promise<void>;
   /** place puts item at `index` of folder `parent`'s entries (counted
    *  without the item): the order people set by dragging. */
   place(item: Dragged, parent: string, index: number): Promise<void>;
-  /** placeChild puts a document among parent's children: before or after
-   *  a sibling, first, or at the end; dragged out of another document, it
-   *  leaves that one. */
-  placeChild(item: Dragged, parent: string, at: { before?: string; after?: string; first?: boolean }): Promise<void>;
+  /** placeInDoc moves a document to live inside parent, at `index` of the
+   *  documents living there. */
+  placeInDoc(item: Dragged, parent: string, index: number): Promise<void>;
+  /** placeShortcut moves a shortcut (a link) into parent, among its
+   *  shortcuts. */
+  placeShortcut(item: Dragged, parent: string, at: LinkPlace): Promise<void>;
   createDoc(mode: Mode, folder: string, title?: string): Promise<Board>;
-  /** createChild makes a new document inside parent (linked from it). */
+  /** createChild makes a new document inside parent (and links it there). */
   createChild(mode: Mode, parent: string): Promise<Board>;
-  /** acceptsChild reports whether doc may be put inside parent. */
-  acceptsChild(item: Dragged | null, parent: string): boolean;
-  /** addChild puts an existing document inside parent. */
-  addChild(parent: string, doc: string): Promise<void>;
+  /** makeOriginal moves a document to where its shortcut in parent is; where
+   *  it lived (a document) keeps a shortcut to it instead. */
+  makeOriginal(doc: string, parent: string): Promise<void>;
+  /** copyShortcut turns the shortcut in parent into a separate copy. */
+  copyShortcut(doc: string, parent: string): Promise<Board>;
+  /** removeShortcut takes the shortcut in parent away (its link line). */
+  removeShortcut(doc: string, parent: string): Promise<void>;
   createFolder(name: string, parent: string): Promise<Folder>;
   renameFolder(id: string, name: string): Promise<void>;
   deleteFolder(id: string): Promise<void>;
@@ -85,6 +99,16 @@ export function useCatalog(): Catalog {
  *  the status stream (which announces every change) is down. */
 const REFRESH_MS = 30_000;
 
+/** unlinkQuietly takes doc's link line out of parent, where a mention in the
+ *  text may keep it: then it stays there as a shortcut, which is right. */
+async function unlinkQuietly(parent: string, doc: string) {
+  try {
+    await api.removeChild(parent, doc);
+  } catch {
+    /* mentioned in the text there: it stays a shortcut */
+  }
+}
+
 export function CatalogProvider({
   canWrite,
   version,
@@ -101,6 +125,7 @@ export function CatalogProvider({
   const [all, setDocs] = useState<Board[] | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [trail, setTrail] = useState<Trail | null>(null);
   const seq = useRef(0);
 
   const reload = useCallback(() => {
@@ -130,29 +155,7 @@ export function CatalogProvider({
     if (version !== undefined) reload();
   }, [version, reload]);
 
-  // Links announced by expectChild, by child, with when they expire.
-  const [expected, setExpected] = useState<Map<string, { parent: string; until: number }>>(new Map());
-  useEffect(() => {
-    const on = (e: Event) => {
-      const { parent, child } = (e as CustomEvent<{ parent: string; child: string }>).detail;
-      setExpected(m => new Map(m).set(child, { parent, until: Date.now() + EXPECT_MS }));
-      setTimeout(() => setExpected(m => (m.has(child) ? new Map([...m].filter(([c]) => c !== child)) : m)), EXPECT_MS);
-    };
-    window.addEventListener(EXPECT_CHILD, on);
-    return () => window.removeEventListener(EXPECT_CHILD, on);
-  }, []);
-
-  const docs = useMemo(() => {
-    const live = all?.filter(d => !d.trashed) ?? null;
-    if (!live || expected.size === 0) return live;
-    const now = Date.now();
-    return live.map(d => {
-      const add = [...expected]
-        .filter(([c, x]) => x.parent === d.id && x.until > now && !(d.links ?? []).includes(c))
-        .map(([c]) => c);
-      return add.length ? { ...d, links: [...(d.links ?? []), ...add] } : d;
-    });
-  }, [all, expected]);
+  const docs = useMemo(() => all?.filter(d => !d.trashed) ?? null, [all]);
   const trash = useMemo(
     () => (all ?? []).filter(d => d.trashed).sort((a, b) => (b.trashed ?? '').localeCompare(a.trashed ?? '')),
     [all],
@@ -170,13 +173,50 @@ export function CatalogProvider({
         reload();
       }
     };
+    const patchLocal = (id: string, patch: Partial<Board>) =>
+      setDocs(ds => ds?.map(d => (d.id === id ? { ...d, ...patch } : d)) ?? ds);
     const setTrashed = (id: string, on: boolean) =>
       act(async () => {
         // Show it at once; the reload confirms it.
-        const at = on ? new Date().toISOString() : undefined;
-        setDocs(ds => ds?.map(d => (d.id === id ? { ...d, trashed: at } : d)) ?? ds);
+        patchLocal(id, { trashed: on ? new Date().toISOString() : undefined });
         await api.updateBoard(id, { trashed: on });
       });
+    // writeRanks stores new ranks; the moving item also gets its new home.
+    const writeRanks = async (ps: Placement[], item: Dragged, home: { folder?: string; parent?: string }) => {
+      const rankOf = (kind: string, id: string) => ps.find(p => p.kind === kind && p.id === id)?.rank;
+      // Show the new order at once; the reload confirms it.
+      setDocs(
+        ds =>
+          ds?.map(d => {
+            const r = rankOf('doc', d.id);
+            if (item.kind === 'doc' && d.id === item.id)
+              return { ...d, folder: home.folder ?? '', parent: home.parent, rank: r ?? d.rank };
+            return r ? { ...d, rank: r } : d;
+          }) ?? ds,
+      );
+      setFolders(fs =>
+        fs.map(f => {
+          const r = rankOf('folder', f.id);
+          if (item.kind === 'folder' && f.id === item.id) return { ...f, parent: home.folder ?? '', rank: r ?? f.rank };
+          return r ? { ...f, rank: r } : f;
+        }),
+      );
+      for (const p of ps) {
+        const moving = p.kind === item.kind && p.id === item.id;
+        if (p.kind === 'doc') {
+          const where = home.parent ? { parent: home.parent } : { folder: home.folder ?? '' };
+          await api.updateBoard(p.id, moving ? { ...where, rank: p.rank } : { rank: p.rank });
+        } else {
+          await api.updateFolder(p.id, moving ? { parent: home.folder ?? '', rank: p.rank } : { rank: p.rank });
+        }
+      }
+      // A rank that did not change still moves the item.
+      if (!ps.some(p => p.kind === item.kind && p.id === item.id)) {
+        if (item.kind === 'doc') await api.updateBoard(item.id, home.parent ? { parent: home.parent } : { folder: home.folder ?? '' });
+        else await api.updateFolder(item.id, { parent: home.folder ?? '' });
+      }
+    };
+    const homeOf = (id: string) => docs?.find(d => d.id === id)?.parent;
     return {
       docs,
       trash,
@@ -184,18 +224,22 @@ export function CatalogProvider({
       error,
       canWrite,
       reload,
-      patchDoc: (id, patch) => setDocs(ds => ds?.map(d => (d.id === id ? { ...d, ...patch } : d)) ?? ds),
+      patchDoc: patchLocal,
+      trail,
+      setTrail,
       accepts: (item, target) => {
-        if (!item || !canWrite) return false;
+        if (!item || !canWrite || item.shortcut) return false;
         if (item.kind === 'folder') return canMoveFolder(folders, item.id, target);
-        return (docs?.find(d => d.id === item.id)?.folder ?? '') !== target;
+        const d = docs?.find(x => x.id === item.id);
+        return !!d && (d.parent ? true : d.folder !== target);
       },
       move: (item, target) =>
         act(async () => {
-          // Show the move at once; the reload confirms it.
           if (item.kind === 'doc') {
-            setDocs(ds => ds?.map(d => (d.id === item.id ? { ...d, folder: target } : d)) ?? ds);
+            const old = homeOf(item.id);
+            patchLocal(item.id, { folder: target, parent: undefined });
             await api.updateBoard(item.id, { folder: target });
+            if (old) await unlinkQuietly(old, item.id);
           } else {
             setFolders(fs => fs.map(f => (f.id === item.id ? { ...f, parent: target } : f)));
             await api.updateFolder(item.id, { parent: target });
@@ -203,73 +247,48 @@ export function CatalogProvider({
         }),
       place: (item, parent, index) =>
         act(async () => {
-          if (item.from) {
-            setDocs(ds => ds?.map(d => (d.id === item.from ? { ...d, links: d.links?.filter(l => l !== item.id) } : d)) ?? ds);
-            await api.removeChild(item.from, item.id);
-          }
-          // The order is among what the level shows: documents nested in
-          // another one are not at the top.
-          const ps = placeAt(folders, topLevel(folders, docs ?? []), parent, item, index);
-          const rankOf = (kind: string, id: string) => ps.find(p => p.kind === kind && p.id === id)?.rank;
-          // Show the new order at once; the reload confirms it.
-          setDocs(
-            ds =>
-              ds?.map(d => {
-                const r = rankOf('doc', d.id);
-                if (item.kind === 'doc' && d.id === item.id) return { ...d, folder: parent, rank: r ?? d.rank };
-                return r ? { ...d, rank: r } : d;
-              }) ?? ds,
-          );
-          setFolders(fs =>
-            fs.map(f => {
-              const r = rankOf('folder', f.id);
-              if (item.kind === 'folder' && f.id === item.id) return { ...f, parent, rank: r ?? f.rank };
-              return r ? { ...f, rank: r } : f;
-            }),
-          );
-          for (const p of ps) {
-            const moving = p.kind === item.kind && p.id === item.id;
-            if (p.kind === 'doc') await api.updateBoard(p.id, moving ? { folder: parent, rank: p.rank } : { rank: p.rank });
-            else await api.updateFolder(p.id, moving ? { parent, rank: p.rank } : { rank: p.rank });
-          }
+          const old = item.kind === 'doc' ? homeOf(item.id) : undefined;
+          // The order is among what the level shows: documents living in
+          // another document are not at the folder level.
+          await writeRanks(placeAt(folders, atFolderLevel(docs ?? []), parent, item, index), item, { folder: parent });
+          if (old) await unlinkQuietly(old, item.id);
+        }),
+      placeInDoc: (item, parent, index) =>
+        act(async () => {
+          const p = docs?.find(d => d.id === parent);
+          if (!p) return;
+          const old = homeOf(item.id);
+          const siblings = inside(docs ?? [], p).docs.map(d => ({ kind: 'doc' as const, id: d.id, rank: d.rank }));
+          await writeRanks(placeAmong(siblings, item, index), item, { parent });
+          // Its parent's body links to it, as "+" does; where it came from
+          // no longer does (unless the text there mentions it).
+          await api.addChild(parent, item.id);
+          if (old && old !== parent) await unlinkQuietly(old, item.id);
+        }),
+      placeShortcut: (item, parent, at) =>
+        act(async () => {
+          // Out of the old place first: when that is refused (it is
+          // mentioned in the text there), nothing has moved.
+          if (item.from && item.from !== parent) await api.removeChild(item.from, item.id);
+          await api.addChild(parent, item.id, at);
         }),
       createDoc: (mode, folder, title = '') => act(() => api.createBoard({ mode, folder, title })),
       createChild: (mode, parent) =>
         act(async () => {
-          const b = await api.createBoard({ mode });
+          const b = await api.createBoard({ mode, parent });
           await api.addChild(parent, b.id);
           return b;
         }),
-      acceptsChild: (item, parent) => !!item && canWrite && item.kind === 'doc' && item.id !== parent,
-      placeChild: (item, parent, at) =>
+      makeOriginal: (doc, parent) =>
         act(async () => {
-          // Show the new order at once; the reload confirms it.
-          setDocs(
-            ds =>
-              ds?.map(d => {
-                let links = d.links ?? [];
-                if (d.id === item.from || d.id === parent) links = links.filter(l => l !== item.id);
-                if (d.id !== parent) return links === d.links ? d : { ...d, links };
-                const anchor = at.before ?? at.after;
-                let i = anchor ? links.indexOf(anchor) : -1;
-                if (i >= 0 && at.after) i++;
-                if (at.first) i = 0;
-                if (i < 0) i = links.length;
-                return { ...d, links: [...links.slice(0, i), item.id, ...links.slice(i)] };
-              }) ?? ds,
-          );
-          // Out of the old place first: when that is refused (it is
-          // mentioned in the text there), nothing has moved and no copy is
-          // left behind.
-          if (item.from && item.from !== parent) await api.removeChild(item.from, item.id);
-          await api.addChild(parent, item.id, at);
+          const old = homeOf(doc);
+          patchLocal(doc, { parent, folder: '' });
+          await api.updateBoard(doc, { parent });
+          // Where it lived keeps a shortcut to it.
+          if (old) await api.addChild(old, doc);
         }),
-      addChild: (parent, doc) =>
-        act(async () => {
-          // Show it inside at once; the reload confirms it.
-          setDocs(ds => ds?.map(d => (d.id === parent ? { ...d, links: [...(d.links ?? []), doc] } : d)) ?? ds);
-          await api.addChild(parent, doc);
-        }),
+      copyShortcut: (doc, parent) => act(() => api.copyBoard(doc, parent)),
+      removeShortcut: (doc, parent) => act(() => api.removeChild(parent, doc)),
       createFolder: (name, parent) => act(() => api.createFolder(name, parent)),
       renameFolder: (id, name) => act(async () => void (await api.updateFolder(id, { name }))),
       deleteFolder: id => act(() => api.deleteFolder(id)),
@@ -281,7 +300,7 @@ export function CatalogProvider({
           await api.deleteBoard(id);
         }),
     };
-  }, [docs, trash, folders, error, canWrite, reload]);
+  }, [docs, trash, folders, error, canWrite, reload, trail]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

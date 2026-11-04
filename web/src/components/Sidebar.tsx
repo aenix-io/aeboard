@@ -2,11 +2,11 @@ import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef
 
 import type { Board, Folder } from '../api';
 import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../catalog';
-import { childrenOf, type Entry, entriesOf, pathOf, topLevel } from '../library';
+import { atFolderLevel, type Crumb, type Entry, entriesOf, homePath, inside, isInside, pathOf } from '../library';
 import { navigate, type Route } from '../router';
 import { type Container, type Drop, levelAt, resolveDrop, type RowCtx, type Zone } from '../tree';
 import { untitled } from './BoardPage';
-import { BoardIcon, FolderIcon, McpIcon, PageIcon, TrashIcon } from './icons';
+import { BoardIcon, FolderIcon, McpIcon, PageIcon, ShortcutBadge, TrashIcon } from './icons';
 import { Confirm } from './Confirm';
 import { McpDialog } from './McpDialog';
 
@@ -29,11 +29,13 @@ function saveExpanded(s: Set<string>) {
   }
 }
 
-/** Sidebar is the tree of folders, pages and boards, after AFFiNE's: a
- *  folder only expands and collapses; a document opens, and expands to the
- *  documents it links to — its children. "+" creates anything anywhere (in
- *  a document: a new page linked from it), dragging moves, and dropping a
- *  document on another one's middle puts it inside (links it from there). */
+/** Sidebar is the tree of folders, pages and boards. Every document has one
+ *  place — a folder, the top level or inside another document — and shows
+ *  there; the documents a document links to that live elsewhere show inside
+ *  it as shortcuts (with an arrow). A folder only expands and collapses; a
+ *  document opens. "+" creates anything anywhere, dragging moves a document
+ *  (or a shortcut, which is a link), and a shortcut's menu can make it the
+ *  original or a separate copy. */
 export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   const cat = useCatalog();
   const [mcpOpen, setMcpOpen] = useState(false);
@@ -48,27 +50,28 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   // The folder an inline "new folder" field is open in, or null.
   const [newFolderIn, setNewFolderIn] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
-  // The row last clicked to open a document: a document linked from two
-  // places has two rows, and only the one used is marked as open.
-  const [opened, setOpened] = useState<{ doc: string; node: string } | null>(null);
   // The document a "move to trash" confirmation is open for.
   const [trashing, setTrashing] = useState<Board | null>(null);
 
   const docs = useMemo(() => cat.docs ?? [], [cat.docs]);
-  // What the levels list: documents nested in another one show only there.
-  const placed = useMemo(() => topLevel(cat.folders, docs), [cat.folders, docs]);
+  // What the folder levels list: documents living in another one show there.
+  const placed = useMemo(() => atFolderLevel(docs), [docs]);
   const currentDoc = route.name === 'board' ? route.id : '';
-  const currentFolder = docs.find(d => d.id === currentDoc)?.folder ?? '';
+  // The row of the open document: the one clicked, or its own place.
+  const trail = cat.trail?.doc === currentDoc ? cat.trail : null;
+  const homeKey = useMemo(() => homeNodes(homePath(cat.folders, docs, currentDoc), currentDoc), [cat.folders, docs, currentDoc]);
 
-  // Open the way down to where the visitor is.
+  // Open the way down to where the visitor is (the document's own place,
+  // when they did not come by a row).
   useEffect(() => {
-    const up = pathOf(cat.folders, currentFolder).map(f => `f:${f.id}`);
+    if (!currentDoc || trail) return;
+    const up = homeKey.slice(0, -1);
     if (up.every(id => expanded.has(id))) return;
     const next = new Set(expanded);
     up.forEach(id => next.add(id));
     setExpanded(next);
     saveExpanded(next);
-  }, [currentFolder, cat.folders]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [homeKey.join(' '), trail]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (id: string, open?: boolean) => {
     const next = new Set(expanded);
@@ -177,11 +180,28 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     );
   };
 
+  // The rows a level shows under document d: its own documents, then its
+  // shortcuts.
+  const rowsIn = (d: Board) => {
+    const { docs: own, shortcuts } = inside(docs, d);
+    return [...own.map(x => ({ doc: x, shortcut: false })), ...shortcuts.map(x => ({ doc: x, shortcut: true }))];
+  };
+  const isShortcutIn = (parent: string, id: string) => {
+    const p = docs.find(d => d.id === parent);
+    return !!p && inside(docs, p).shortcuts.some(x => x.id === id);
+  };
+
   // accepts reports whether item may land where drop says.
   const accepts = (item: Dragged | null, d: Drop): boolean => {
     if (!item || !cat.canWrite) return false;
-    if (d.container.kind === 'doc') return cat.acceptsChild(item, d.container.id);
-    // A folder may not go below itself.
+    if (d.container.kind === 'doc') {
+      const at = d.container.id;
+      if (item.kind !== 'doc' || item.id === at) return false;
+      // A shortcut is a link, anywhere; a document may not go inside itself.
+      return item.shortcut || !isInside(docs, at, item.id);
+    }
+    // Folders hold documents and folders, not shortcuts.
+    if (item.shortcut) return false;
     if (item.kind === 'folder') {
       const at = d.container.id;
       return at !== item.id && !pathOf(cat.folders, at).some(f => f.id === item.id);
@@ -195,15 +215,31 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     if ((d.before ?? d.after) === item.id) return;
     // Open the row it goes into, so the item shows where it went.
     if (d.container.id === row.id) toggle(row.node, true);
+    const anchor = d.before ?? d.after;
     if (d.container.kind === 'doc') {
-      void cat.placeChild(item, d.container.id, { before: d.before, after: d.after, first: d.first }).catch(() => {});
+      const parent = d.container.id;
+      const anchorIsShortcut = !!anchor && isShortcutIn(parent, anchor);
+      if (item.shortcut) {
+        // Among the shortcuts; next to one of the documents it goes first.
+        const at = anchorIsShortcut ? { before: d.before, after: d.after } : anchor ? { first: true } : {};
+        void cat.placeShortcut(item, parent, at).catch(() => {});
+        return;
+      }
+      const p = docs.find(x => x.id === parent);
+      const own = p ? inside(docs, p).docs.filter(x => x.id !== item.id) : [];
+      let index = own.length;
+      if (d.first) index = 0;
+      else if (anchor && !anchorIsShortcut) {
+        const k = own.findIndex(x => x.id === anchor);
+        if (k >= 0) index = d.after ? k + 1 : k;
+      }
+      void cat.placeInDoc(item, parent, index).catch(() => {});
       return;
     }
     const folder = d.container.id;
     const siblings = entriesOf(cat.folders, placed, folder).filter(
       (x: Entry) => !(x.kind === item.kind && x.id === item.id),
     );
-    const anchor = d.before ?? d.after;
     let index = siblings.length;
     if (d.first) index = 0;
     else if (anchor) {
@@ -217,14 +253,15 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   // item before it, its bottom edge after it (first inside it when it is
   // open; out to an outer level, picked by the pointer, below a level's
   // last row), its middle inside it.
-  const rowDrop = (row: RowCtx) => ({
+  const rowDrop = (row: RowCtx, takesInto = true) => ({
     onDragOver: (e: DragEvent<HTMLDivElement>) => {
       if (!cat.canWrite || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
       e.preventDefault();
       e.stopPropagation();
       const r = e.currentTarget.getBoundingClientRect();
       const y = (e.clientY - r.top) / r.height;
-      const zone: Zone = y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into';
+      let zone: Zone = y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into';
+      if (zone === 'into' && !takesInto) zone = y < 0.5 ? 'before' : 'after';
       const d = resolveDrop(row, zone, levelAt(e.clientX, r.left, indent, row.depth));
       const item = dragging.current;
       if (item && (!accepts(item, d) || (item.kind === row.kind && item.id === row.id && zone === 'into'))) {
@@ -267,6 +304,18 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
 
   type Place = { node: string; container: Container; depth: number; last: boolean; up: RowCtx[] };
 
+  const caret = (open: boolean, label: string, onClick: () => void) => (
+    <button
+      type="button"
+      className="sb-caret"
+      aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+      aria-expanded={open}
+      onClick={onClick}
+    >
+      {open ? '▼' : '▶'}
+    </button>
+  );
+
   const folderRow = (f: Folder, at: Place) => {
     const open = expanded.has(at.node);
     if (renaming === f.id) {
@@ -294,15 +343,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           {...rowDrop(row)}
         >
           {dropLine(row)}
-          <button
-            type="button"
-            className="sb-caret"
-            aria-label={open ? `Collapse ${f.name}` : `Expand ${f.name}`}
-            aria-expanded={open}
-            onClick={() => toggle(at.node)}
-          >
-            {open ? '▾' : '▸'}
-          </button>
+          {caret(open, f.name, () => toggle(at.node))}
           <button type="button" className="sb-label sb-folder-label" aria-expanded={open} onClick={() => toggle(at.node)}>
             <span className="kind kind-folder">
               <FolderIcon />
@@ -342,87 +383,101 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     );
   };
 
-  // The open document's row: the one clicked, or (opened another way: a
-  // link, the list) its first row in the tree. Rows render in tree order,
-  // so the first one to ask takes it.
-  let firstTaken = false;
-  const isOpenRow = (doc: string, node: string) => {
+  // The open document's row: the one clicked, or its own place.
+  const isOpenRow = (doc: string, node: string, shortcut: boolean) => {
     if (doc !== currentDoc) return false;
-    if (opened?.doc === doc) return opened.node === node;
-    if (firstTaken) return false;
-    firstTaken = true;
-    return true;
+    return trail ? trail.node === node : !shortcut;
   };
 
-  // docRow is a document and, expanded, the documents it links to. A
-  // document shows wherever it is linked from, so a row is keyed by its
-  // path (node), not by the document.
-  const docRow = (d: Board, at: Place) => {
-    const above = new Set(at.up.filter(r => r.kind === 'doc').map(r => r.id));
-    // A document already open above (a cycle) does not repeat below itself.
-    const kids = childrenOf(docs, d).filter(c => !above.has(c.id) && c.id !== d.id);
+  // crumbsOf is the way down to a row, for the header's path.
+  const crumbsOf = (up: RowCtx[]): Crumb[] =>
+    up.map(r => ({
+      kind: r.kind,
+      id: r.id,
+      name:
+        r.kind === 'folder'
+          ? (cat.folders.find(f => f.id === r.id)?.name ?? '')
+          : (docs.find(x => x.id === r.id)?.title ?? ''),
+    }));
+
+  // docRow is a document in its own place and, expanded, what is inside it:
+  // the documents living there, then shortcuts. A shortcut row (a link to a
+  // document living elsewhere) has an arrow and does not expand.
+  const docRow = (d: Board, at: Place, shortcut = false) => {
+    const kids = shortcut ? [] : rowsIn(d);
     const open = kids.length > 0 && expanded.has(at.node);
     const label = d.title || untitled(d.mode);
-    const linked = at.container.kind === 'doc';
+    const from = at.container.kind === 'doc' ? at.container.id : undefined;
     const row: RowCtx = { kind: 'doc', id: d.id, node: at.node, container: at.container, depth: at.depth, last: at.last, open, up: at.up };
+    const items: Array<[string, () => void]> = shortcut
+      ? [
+          ['Make this the original', () => from && void cat.makeOriginal(d.id, from).catch(() => {})],
+          [
+            'Make a separate copy',
+            () =>
+              from &&
+              void cat
+                .copyShortcut(d.id, from)
+                .then(b => navigate(`/b/${b.id}`))
+                .catch(() => {}),
+          ],
+          ['Remove shortcut', () => from && void cat.removeShortcut(d.id, from).catch(() => {})],
+        ]
+      : [['Move to trash', () => setTrashing(d)]];
     return (
       <div key={at.node} className="sb-node">
         <div
-          className={`sb-row${isOpenRow(d.id, at.node) ? ' sb-active' : ''}`}
+          className={`sb-row${isOpenRow(d.id, at.node, shortcut) ? ' sb-active' : ''}${shortcut ? ' sb-shortcut' : ''}`}
           style={{ paddingLeft: indent(at.depth) }}
-          {...drag({ kind: 'doc', id: d.id, from: linked ? at.container.id : undefined })}
-          {...rowDrop(row)}
+          title={shortcut ? `Shortcut to ${label}` : undefined}
+          {...drag({ kind: 'doc', id: d.id, from, shortcut })}
+          {...rowDrop(row, !shortcut)}
         >
           {dropLine(row)}
-          {kids.length > 0 ? (
-            <button
-              type="button"
-              className="sb-caret"
-              aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
-              aria-expanded={open}
-              onClick={() => toggle(at.node)}
-            >
-              {open ? '▾' : '▸'}
-            </button>
-          ) : (
-            <span className="sb-caret sb-caret-none" />
-          )}
+          {kids.length > 0 ? caret(open, label, () => toggle(at.node)) : <span className="sb-caret sb-caret-none" />}
           <a
             className="sb-label"
             href={`/b/${d.id}`}
             onClick={e => {
-              setOpened({ doc: d.id, node: at.node });
+              cat.setTrail({ doc: d.id, node: at.node, path: crumbsOf(at.up), shortcut });
               go(`/b/${d.id}`)(e);
             }}
           >
-            <span className={`kind kind-${d.mode}${linked ? ' kind-linked' : ''}`}>
+            <span className={`kind kind-${d.mode}`}>
               {d.mode === 'page' ? <PageIcon /> : <BoardIcon />}
+              {shortcut && <ShortcutBadge />}
             </span>
             <span className={`sb-name${d.title ? '' : ' sb-untitled'}`}>{label}</span>
           </a>
           {cat.canWrite && (
             <span className="sb-actions">
-              <RowMenu
-                label="Add inside"
-                glyph="+"
-                items={[
-                  ['New page inside', () => void createChild('page', d.id, at.node)],
-                  ['New board inside', () => void createChild('edgeless', d.id, at.node)],
-                ]}
-              />
-              <RowMenu label="Document actions" glyph="⋯" items={[['Move to trash', () => setTrashing(d)]]} />
+              {!shortcut && (
+                <RowMenu
+                  label="Add inside"
+                  glyph="+"
+                  items={[
+                    ['New page inside', () => void createChild('page', d.id, at.node)],
+                    ['New board inside', () => void createChild('edgeless', d.id, at.node)],
+                  ]}
+                />
+              )}
+              <RowMenu label={shortcut ? 'Shortcut actions' : 'Document actions'} glyph="⋯" items={items} />
             </span>
           )}
         </div>
         {open &&
-          kids.map((c, i) =>
-            docRow(c, {
-              node: `${at.node}/${c.id}`,
-              container: { kind: 'doc', id: d.id },
-              depth: at.depth + 1,
-              last: i === kids.length - 1,
-              up: [...at.up, row],
-            }),
+          kids.map((k, i) =>
+            docRow(
+              k.doc,
+              {
+                node: `${at.node}/${k.shortcut ? 's:' : ''}${k.doc.id}`,
+                container: { kind: 'doc', id: d.id },
+                depth: at.depth + 1,
+                last: i === kids.length - 1,
+                up: [...at.up, row],
+              },
+              k.shortcut,
+            ),
           )}
       </div>
     );
@@ -633,4 +688,23 @@ export function useSidebar(): [boolean, () => void] {
       return !o;
     });
   return [open, toggle];
+}
+
+/** homeNodes are the row keys down to a document's own place (folders, the
+ *  documents it is inside, and its own row last). */
+function homeNodes(path: Crumb[], doc: string): string[] {
+  const out: string[] = [];
+  let folder = '';
+  let node = '';
+  for (const c of path) {
+    if (c.kind === 'folder') {
+      folder = c.id;
+      out.push(`f:${c.id}`);
+      continue;
+    }
+    node = node ? `${node}/${c.id}` : `${folder ? `f:${folder}` : ''}/d:${c.id}`;
+    out.push(node);
+  }
+  out.push(node ? `${node}/${doc}` : `${folder ? `f:${folder}` : ''}/d:${doc}`);
+  return out;
 }

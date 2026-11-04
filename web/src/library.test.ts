@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { canMoveFolder, childrenOf, countIn, entriesOf, filterKind, inFolder, pathOf, placeAt, search, topLevel } from './library';
+import { canMoveFolder, atFolderLevel, countIn, homePath, inside, isInside, entriesOf, filterKind, inFolder, pathOf, placeAt, search } from './library';
 
 // work/
 //   meetings/
@@ -112,31 +112,33 @@ describe('ordering', () => {
 });
 
 describe('documents inside documents', () => {
-  const doc = (id: string, links: string[] = [], folder = '') => ({ id, title: id, mode: 'page' as const, folder, links });
+  const doc = (id: string, o: { parent?: string; links?: string[]; folder?: string; rank?: string } = {}) => ({
+    id,
+    title: id,
+    mode: 'page' as const,
+    folder: o.folder ?? '',
+    parent: o.parent,
+    links: o.links,
+    rank: o.rank,
+  });
   const folders = [{ id: 'f', name: 'F', parent: '' }];
 
-  it('lists the linked documents that exist, in link order', () => {
-    const docs = [doc('a', ['c', 'gone', 'a', 'b']), doc('b'), doc('c')];
-    expect(childrenOf(docs, docs[0]).map(d => d.id)).toEqual(['c', 'b']);
+  it('shows a document in its one home', () => {
+    const docs = [doc('p', { links: ['x', 'c'] }), doc('c', { parent: 'p' }), doc('x', { folder: 'f' })];
+    expect(atFolderLevel(docs).map(d => d.id)).toEqual(['p', 'x']);
+    const p = inside(docs, docs[0]);
+    expect(p.docs.map(d => d.id)).toEqual(['c']);
+    expect(p.shortcuts.map(d => d.id)).toEqual(['x']);
   });
 
-  it('shows a linked document inside its parent, not at the top', () => {
-    const docs = [doc('a', ['b']), doc('b', ['c']), doc('c'), doc('d')];
-    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a', 'd']);
+  it('puts a document whose parent is gone at the top', () => {
+    expect(atFolderLevel([doc('c', { parent: 'gone' })]).map(d => d.id)).toEqual(['c']);
   });
 
-  it('keeps a document in a folder there even when it is linked', () => {
-    const docs = [doc('a', ['b']), doc('b', [], 'f')];
-    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a', 'b']);
-  });
-
-  it('nests a top-level document linked from one in a folder', () => {
-    const docs = [doc('a', ['b'], 'f'), doc('b')];
-    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a']);
-  });
-
-  it('keeps one member of a closed cycle at the top', () => {
-    const docs = [doc('a', ['b']), doc('b', ['a'])];
-    expect(topLevel(folders, docs).map(d => d.id)).toEqual(['a']);
+  it('finds the way down to a document', () => {
+    const docs = [doc('p', { folder: 'f' }), doc('c', { parent: 'p' }), doc('g', { parent: 'c' })];
+    expect(homePath(folders, docs, 'g').map(c => c.id)).toEqual(['f', 'p', 'c']);
+    expect(isInside(docs, 'g', 'p')).toBe(true);
+    expect(isInside(docs, 'p', 'g')).toBe(false);
   });
 });

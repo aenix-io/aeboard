@@ -12,7 +12,6 @@ import type { DocMode } from '@blocksuite/affine/model';
 import { Subject } from 'rxjs';
 
 import { api } from '../api';
-import { expectChild } from '../catalog';
 import { ServerBlobSource } from './blobs';
 import { ToastNotifications } from './notifications';
 import { registerTemplates } from './templates';
@@ -73,10 +72,8 @@ export function getWorkspace(user: User): DocsWorkspace {
     blobSource: new ServerBlobSource(() => currentDocID),
     create: async id => {
       // The editor makes a document from inside the open one ("@" → new
-      // doc, "turn into linked doc"), and links it from there right after:
-      // the sidebar shows it inside at once instead of at the top first.
-      if (currentDocID) expectChild(currentDocID, id);
-      await api.createBoard({ id, mode: 'page', blank: true });
+      // doc, "turn into linked doc"): it lives there.
+      await api.createBoard({ id, mode: 'page', blank: true, parent: currentDocID || undefined });
     },
   });
   workspace.storeExtensions = getTestStoreManager().get('store');

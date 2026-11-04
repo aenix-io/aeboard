@@ -16,7 +16,10 @@ export interface DocNode {
   mode: 'edgeless' | 'page';
   folder: string;
   rank?: string;
-  /** The documents this one links to: its children. */
+  /** The document this one lives inside; its folder is "" then. */
+  parent?: string;
+  /** The documents this one links to: shortcuts inside it, for those that
+   *  live elsewhere. */
   links?: string[];
 }
 
@@ -130,7 +133,16 @@ export function placeAt(
   item: { kind: 'folder' | 'doc'; id: string },
   index: number,
 ): Placement[] {
-  const siblings = entriesOf(folders, docs, parent).filter(e => !(e.kind === item.kind && e.id === item.id));
+  return placeAmong(entriesOf(folders, docs, parent), item, index);
+}
+
+/** placeAmong is placeAt over any ordered list of siblings. */
+export function placeAmong(
+  entries: Array<{ kind: 'folder' | 'doc'; id: string; rank?: string }>,
+  item: { kind: 'folder' | 'doc'; id: string },
+  index: number,
+): Placement[] {
+  const siblings = entries.filter(e => !(e.kind === item.kind && e.id === item.id));
   const at = Math.max(0, Math.min(index, siblings.length));
   if (siblings.every(e => e.rank)) {
     const prev = siblings[at - 1]?.rank ?? '';
@@ -151,53 +163,64 @@ export function placeAt(
   return out;
 }
 
-/** childrenOf are the documents d links to that exist, in link order (as
- *  AFFiNE's sidebar: a document's children are what its body links to). */
-export function childrenOf<D extends DocNode>(docs: D[], d: DocNode): D[] {
+/** atFolderLevel are the documents that live in a folder or at the top
+ *  level: not inside another document (one whose parent is gone counts as
+ *  at the top). */
+export function atFolderLevel<D extends DocNode>(docs: D[]): D[] {
+  const ids = new Set(docs.map(d => d.id));
+  return docs.filter(d => !d.parent || !ids.has(d.parent));
+}
+
+/** inside is what shows in document d: the documents that live in it, in
+ *  their order, then shortcuts — the documents it links to that live
+ *  elsewhere, in link order. */
+export function inside<D extends DocNode>(docs: D[], d: DocNode): { docs: D[]; shortcuts: D[] } {
+  const own = docs
+    .filter(x => x.parent === d.id && x.id !== d.id)
+    .sort((a, b) => byRankThenName({ ...a, name: a.title || '\uffff' }, { ...b, name: b.title || '\uffff' }));
   const byID = new Map(docs.map(x => [x.id, x]));
-  return (d.links ?? []).flatMap(id => {
-    const c = byID.get(id);
-    return c && c.id !== d.id ? [c] : [];
+  const seen = new Set<string>();
+  const shortcuts = (d.links ?? []).flatMap(id => {
+    const x = byID.get(id);
+    if (!x || x.id === d.id || x.parent === d.id || seen.has(id)) return [];
+    seen.add(id);
+    return [x];
   });
+  return { docs: own, shortcuts };
 }
 
-/** nestedAtTop are the top-level documents that show inside another
- *  document instead: linked from one that is itself reachable from the top
- *  or a folder. A cycle nobody else links into stays at the top, so nothing
- *  disappears from the tree. */
-export function nestedAtTop(folders: FolderNode[], docs: DocNode[]): Set<string> {
-  const known = new Set(folders.map(f => f.id));
-  const top = (d: DocNode) => !known.has(d.folder);
-  const linked = new Set(docs.flatMap(d => (d.links ?? []).filter(l => l !== d.id)));
+/** A step of a path to a document: a folder or a document above it. */
+export interface Crumb {
+  kind: 'folder' | 'doc';
+  id: string;
+  name: string;
+}
+
+/** homePath is the way down to where document id lives: its folders, then
+ *  the documents it is inside, outermost first (not the document itself). */
+export function homePath(folders: FolderNode[], docs: DocNode[], id: string): Crumb[] {
   const byID = new Map(docs.map(d => [d.id, d]));
-  // Roots: everything in a folder, and top-level documents nobody links to.
-  const reached = new Set<string>();
-  const queue = docs.filter(d => !top(d) || !linked.has(d.id)).map(d => d.id);
-  const walk = () => {
-    while (queue.length) {
-      const id = queue.pop()!;
-      if (reached.has(id)) continue;
-      reached.add(id);
-      for (const l of byID.get(id)?.links ?? []) if (byID.has(l) && !reached.has(l)) queue.push(l);
-    }
-  };
-  walk();
-  // What no root reaches is a closed cycle: its first member stands at the
-  // top and brings the rest in.
-  for (const d of docs) {
-    if (!reached.has(d.id)) {
-      queue.push(d.id);
-      reached.add('\0' + d.id); // marks d as a root below
-      walk();
-    }
+  const up: Crumb[] = [];
+  const seen = new Set<string>([id]);
+  let d = byID.get(id);
+  while (d?.parent && byID.has(d.parent) && !seen.has(d.parent)) {
+    const p = byID.get(d.parent)!;
+    seen.add(p.id);
+    up.unshift({ kind: 'doc', id: p.id, name: p.title });
+    d = p;
   }
-  const out = new Set<string>();
-  for (const d of docs) if (top(d) && linked.has(d.id) && !reached.has('\0' + d.id)) out.add(d.id);
-  return out;
+  const folder = d?.folder ?? '';
+  return [...pathOf(folders, folder).map(f => ({ kind: 'folder' as const, id: f.id, name: f.name })), ...up];
 }
 
-/** topLevel is the documents the top level shows (see nestedAtTop). */
-export function topLevel<D extends DocNode>(folders: FolderNode[], docs: D[]): D[] {
-  const nested = nestedAtTop(folders, docs);
-  return docs.filter(d => !nested.has(d.id));
+/** isInside reports whether document id lives somewhere under doc
+ *  `ancestor` (so ancestor may not go inside it). */
+export function isInside(docs: DocNode[], id: string, ancestor: string): boolean {
+  const byID = new Map(docs.map(d => [d.id, d]));
+  const seen = new Set<string>();
+  for (let at = byID.get(id)?.parent; at && !seen.has(at); at = byID.get(at)?.parent) {
+    if (at === ancestor) return true;
+    seen.add(at);
+  }
+  return false;
 }
