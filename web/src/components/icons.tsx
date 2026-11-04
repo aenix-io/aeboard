@@ -25,3 +25,11 @@ export function FolderIcon() {
     </svg>
   );
 }
+
+export function McpIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5" />
+    </svg>
+  );
+}

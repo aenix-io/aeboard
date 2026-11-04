@@ -1,11 +1,12 @@
-import { type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Board, Folder } from '../api';
 import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../catalog';
 import { type Entry, entriesOf, pathOf } from '../library';
 import { folderPath, navigate, type Route } from '../router';
 import { untitled } from './BoardPage';
-import { BoardIcon, FolderIcon, PageIcon } from './icons';
+import { BoardIcon, FolderIcon, McpIcon, PageIcon } from './icons';
+import { McpDialog } from './McpDialog';
 
 const OPEN_KEY = 'aenotes.sidebar.expanded';
 
@@ -28,8 +29,10 @@ function saveExpanded(s: Set<string>) {
 
 /** Sidebar is the Notion-style tree of folders, pages and boards: expand
  *  folders in place, create anything anywhere from "+", drag to move. */
-export function Sidebar({ route }: { route: Route }) {
+export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
   const cat = useCatalog();
+  const [mcpOpen, setMcpOpen] = useState(false);
+  const closeMcp = useCallback(() => setMcpOpen(false), []);
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   // Where a drag would land on a row: before it, after it, or into it (a
@@ -318,6 +321,13 @@ export function Sidebar({ route }: { route: Route }) {
         <div className="sb-rest" {...drop('')} />
       </div>
       {cat.error && <div className="sb-error error">{cat.error}</div>}
+      <div className="sb-foot">
+        <button type="button" className="sb-foot-button" onClick={() => setMcpOpen(true)}>
+          <McpIcon />
+          MCP
+        </button>
+      </div>
+      {mcpOpen && <McpDialog hosted={hosted} onClose={closeMcp} />}
     </aside>
   );
 }

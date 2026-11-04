@@ -79,7 +79,7 @@ function Boards({
   return (
     <CatalogProvider canWrite={canWrite} version={sync?.catalog}>
       <div className={`app shell${sidebar ? ' shell-sidebar' : ''}`}>
-        {sidebar && <Sidebar route={route} />}
+        {sidebar && <Sidebar route={route} hosted={!!me?.hosted} />}
         <main className="main">
           {route.name === 'board' ? (
             <BoardPage
