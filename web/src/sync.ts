@@ -11,6 +11,8 @@ export interface SyncStatus {
   lastSync?: string;
   unpushedSince?: string;
   error?: string;
+  /** Grows with every change to the document list (see catalog.tsx). */
+  catalog?: number;
 }
 
 /** How long unpushed changes may wait before the badge warns (as aeman's

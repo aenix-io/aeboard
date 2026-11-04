@@ -6,6 +6,7 @@ export interface Board {
   title: string;
   /** The folder the document is in; "" is the top level. */
   folder: string;
+  rank?: string;
   created: string;
   updated: string;
 }
@@ -15,6 +16,7 @@ export interface Folder {
   name: string;
   /** "" is the top level. */
   parent: string;
+  rank?: string;
 }
 
 export interface BoardList {
@@ -93,10 +95,10 @@ export const api = {
   getBoard: (id: string) => call<Board>('GET', `/boards/${id}`),
   createBoard: (doc: { id?: string; mode?: 'edgeless' | 'page'; title?: string; folder?: string; blank?: boolean }) =>
     call<Board>('POST', '/boards', doc),
-  updateBoard: (id: string, patch: { title?: string; folder?: string }) =>
+  updateBoard: (id: string, patch: { title?: string; folder?: string; rank?: string }) =>
     call<Board>('PATCH', `/boards/${id}`, patch),
   createFolder: (name: string, parent: string) => call<Folder>('POST', '/folders', { name, parent }),
-  updateFolder: (id: string, patch: { name?: string; parent?: string }) =>
+  updateFolder: (id: string, patch: { name?: string; parent?: string; rank?: string }) =>
     call<Folder>('PATCH', `/folders/${id}`, patch),
   deleteFolder: (id: string) => call<void>('DELETE', `/folders/${id}`),
 };

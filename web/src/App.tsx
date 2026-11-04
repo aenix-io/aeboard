@@ -77,7 +77,7 @@ function Boards({
     </>
   );
   return (
-    <CatalogProvider canWrite={canWrite}>
+    <CatalogProvider canWrite={canWrite} version={sync?.catalog}>
       <div className={`app shell${sidebar ? ' shell-sidebar' : ''}`}>
         {sidebar && <Sidebar route={route} />}
         <main className="main">

@@ -2,7 +2,7 @@ import { type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } 
 
 import type { Board, Folder } from '../api';
 import { DRAG_TYPE, type Dragged, dragData, type Mode, useCatalog } from '../catalog';
-import { inFolder, pathOf } from '../library';
+import { type Entry, entriesOf, pathOf } from '../library';
 import { folderPath, navigate, type Route } from '../router';
 import { untitled } from './BoardPage';
 import { BoardIcon, FolderIcon, PageIcon } from './icons';
@@ -32,6 +32,9 @@ export function Sidebar({ route }: { route: Route }) {
   const cat = useCatalog();
   const [expanded, setExpanded] = useState<Set<string>>(loadExpanded);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  // Where a drag would land on a row: before it, after it, or into it (a
+  // folder's middle).
+  const [dropAt, setDropAt] = useState<{ id: string; pos: 'before' | 'after' | 'into' } | null>(null);
   // The folder an inline "new folder" field is open in, or null.
   const [newFolderIn, setNewFolderIn] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -108,8 +111,7 @@ export function Sidebar({ route }: { route: Route }) {
   };
 
   const renderLevel = (parent: string, depth: number): ReactNode => {
-    const here = inFolder(cat.folders, docs, parent);
-    const sortedDocs = [...here.docs].sort((a, b) => (a.title || '~').localeCompare(b.title || '~'));
+    const entries = entriesOf(cat.folders, docs, parent);
     return (
       <>
         {newFolderIn === parent && (
@@ -123,9 +125,8 @@ export function Sidebar({ route }: { route: Route }) {
             }}
           />
         )}
-        {here.folders.map(f => folderRow(f, depth))}
-        {sortedDocs.map(d => docRow(d, depth))}
-        {here.folders.length === 0 && sortedDocs.length === 0 && newFolderIn !== parent && depth > 0 && (
+        {entries.map(e => (e.kind === 'folder' ? folderRow(e.folder, depth, parent) : docRow(e.doc, depth, parent)))}
+        {entries.length === 0 && newFolderIn !== parent && depth > 0 && (
           <div className="sb-empty" style={{ paddingLeft: indent(depth) + 22 }}>
             Empty
           </div>
@@ -134,7 +135,50 @@ export function Sidebar({ route }: { route: Route }) {
     );
   };
 
-  const folderRow = (f: Folder, depth: number) => {
+  // rowDrop makes a row take drops: on its top or bottom edge the dragged
+  // item goes before or after it (in the row's folder), on a folder's middle
+  // into that folder.
+  const rowDrop = (entry: { kind: 'folder' | 'doc'; id: string }, parent: string) => ({
+    onDragOver: (e: DragEvent<HTMLDivElement>) => {
+      if (!cat.canWrite || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      const r = e.currentTarget.getBoundingClientRect();
+      const y = (e.clientY - r.top) / r.height;
+      const pos = entry.kind === 'folder' ? (y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into') : y < 0.5 ? 'before' : 'after';
+      setDropAt(d => (d?.id === entry.id && d.pos === pos ? d : { id: entry.id, pos }));
+    },
+    onDragLeave: (e: DragEvent<HTMLDivElement>) => {
+      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+      setDropAt(d => (d?.id === entry.id ? null : d));
+    },
+    onDrop: (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const at = dropAt;
+      setDropAt(null);
+      const item = dragData(e);
+      if (!item || !at || at.id !== entry.id || (item.kind === entry.kind && item.id === entry.id)) return;
+      if (at.pos === 'into') {
+        if (cat.accepts(item, entry.id)) {
+          toggle(entry.id, true);
+          void cat.move(item, entry.id).catch(() => {});
+        }
+        return;
+      }
+      // A folder may not go below itself.
+      if (item.kind === 'folder' && (parent === item.id || pathOf(cat.folders, parent).some(f => f.id === item.id))) return;
+      const siblings = entriesOf(cat.folders, docs, parent).filter(
+        (x: Entry) => !(x.kind === item.kind && x.id === item.id),
+      );
+      const i = siblings.findIndex(x => x.kind === entry.kind && x.id === entry.id);
+      void cat.place(item, parent, at.pos === 'before' ? i : i + 1).catch(() => {});
+    },
+    'data-drop-pos': dropAt?.id === entry.id ? dropAt.pos : undefined,
+  });
+
+  const folderRow = (f: Folder, depth: number, parent: string) => {
     const open = expanded.has(f.id);
     if (renaming === f.id) {
       return (
@@ -157,7 +201,7 @@ export function Sidebar({ route }: { route: Route }) {
           className={`sb-row${currentFolder === f.id && route.name === 'list' ? ' sb-active' : ''}`}
           style={{ paddingLeft: indent(depth) }}
           {...drag({ kind: 'folder', id: f.id })}
-          {...drop(f.id)}
+          {...rowDrop({ kind: 'folder', id: f.id }, parent)}
         >
           <button
             type="button"
@@ -207,12 +251,13 @@ export function Sidebar({ route }: { route: Route }) {
     );
   };
 
-  const docRow = (d: Board, depth: number) => (
+  const docRow = (d: Board, depth: number, parent: string) => (
     <div
       key={d.id}
       className={`sb-row${d.id === currentDoc ? ' sb-active' : ''}`}
       style={{ paddingLeft: indent(depth) }}
       {...drag({ kind: 'doc', id: d.id })}
+      {...rowDrop({ kind: 'doc', id: d.id }, parent)}
     >
       <span className="sb-caret sb-caret-none" />
       <a className="sb-label" href={`/b/${d.id}`} onClick={go(`/b/${d.id}`)}>

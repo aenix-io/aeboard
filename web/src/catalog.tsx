@@ -3,7 +3,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api, type Board, type Folder } from './api';
-import { canMoveFolder } from './library';
+import { canMoveFolder, placeAt } from './library';
 
 export type Mode = 'edgeless' | 'page';
 
@@ -32,6 +32,9 @@ export interface Catalog {
   /** accepts reports whether item may be dropped into target ("" = top). */
   accepts(item: Dragged | null, target: string): boolean;
   move(item: Dragged, target: string): Promise<void>;
+  /** place puts item at `index` of folder `parent`'s entries (counted
+   *  without the item): the order people set by dragging. */
+  place(item: Dragged, parent: string, index: number): Promise<void>;
   createDoc(mode: Mode, folder: string, title?: string): Promise<Board>;
   createFolder(name: string, parent: string): Promise<Folder>;
   renameFolder(id: string, name: string): Promise<void>;
@@ -46,10 +49,22 @@ export function useCatalog(): Catalog {
   return c;
 }
 
-/** How often the catalog is refreshed in the background (others' changes). */
+/** A safety net: the catalog also refreshes on its own this often, in case
+ *  the status stream (which announces every change) is down. */
 const REFRESH_MS = 30_000;
 
-export function CatalogProvider({ canWrite, children }: { canWrite: boolean; children: ReactNode }) {
+export function CatalogProvider({
+  canWrite,
+  version,
+  children,
+}: {
+  canWrite: boolean;
+  /** The server's catalog version from the status stream: when it moves,
+   *  someone changed the structure, and the list is fetched again — so it
+   *  updates for everyone without a reload. */
+  version?: number;
+  children: ReactNode;
+}) {
   const [docs, setDocs] = useState<Board[] | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +92,10 @@ export function CatalogProvider({ canWrite, children }: { canWrite: boolean; chi
       window.removeEventListener('focus', reload);
     };
   }, [reload]);
+
+  useEffect(() => {
+    if (version !== undefined) reload();
+  }, [version, reload]);
 
   const value = useMemo<Catalog>(() => {
     const act = async <T,>(f: () => Promise<T>): Promise<T> => {
@@ -111,6 +130,32 @@ export function CatalogProvider({ canWrite, children }: { canWrite: boolean; chi
           } else {
             setFolders(fs => fs.map(f => (f.id === item.id ? { ...f, parent: target } : f)));
             await api.updateFolder(item.id, { parent: target });
+          }
+        }),
+      place: (item, parent, index) =>
+        act(async () => {
+          const ps = placeAt(folders, docs ?? [], parent, item, index);
+          const rankOf = (kind: string, id: string) => ps.find(p => p.kind === kind && p.id === id)?.rank;
+          // Show the new order at once; the reload confirms it.
+          setDocs(
+            ds =>
+              ds?.map(d => {
+                const r = rankOf('doc', d.id);
+                if (item.kind === 'doc' && d.id === item.id) return { ...d, folder: parent, rank: r ?? d.rank };
+                return r ? { ...d, rank: r } : d;
+              }) ?? ds,
+          );
+          setFolders(fs =>
+            fs.map(f => {
+              const r = rankOf('folder', f.id);
+              if (item.kind === 'folder' && f.id === item.id) return { ...f, parent, rank: r ?? f.rank };
+              return r ? { ...f, rank: r } : f;
+            }),
+          );
+          for (const p of ps) {
+            const moving = p.kind === item.kind && p.id === item.id;
+            if (p.kind === 'doc') await api.updateBoard(p.id, moving ? { folder: parent, rank: p.rank } : { rank: p.rank });
+            else await api.updateFolder(p.id, moving ? { parent, rank: p.rank } : { rank: p.rank });
           }
         }),
       createDoc: (mode, folder, title = '') => act(() => api.createBoard({ mode, folder, title })),
