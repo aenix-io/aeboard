@@ -58,7 +58,7 @@ button:disabled { opacity: 0.6; cursor: default; }
 
 /* board list */
 .page { max-width: 1100px; margin: 0 auto; padding: 16px 16px 40px; }
-.list-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 28px 0 12px; }
+.list-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin: 4px 0 12px; }
 .list-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
 .list-head .crumbs { margin-left: -6px; }
 .list-tools { display: flex; gap: 8px; flex: 1; justify-content: flex-end; flex-wrap: wrap; }
@@ -296,7 +296,7 @@ a.sb-foot-button { text-decoration: none; }
 
 /* the sidebar's fixed entries and sections, after AFFiNE's */
 .sb-nav { display: flex; flex-direction: column; padding: 0 4px 6px; }
-.sb-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: none; padding: 5px 10px; border-radius: 5px; color: var(--fg); font-size: 13px; text-decoration: none; text-align: left; cursor: pointer; }
+.sb-nav-item { box-sizing: border-box; display: flex; align-items: center; gap: 8px; width: 100%; border: none; background: none; padding: 5px 10px; border-radius: 5px; color: var(--fg); font-size: 13px; text-decoration: none; text-align: left; cursor: pointer; }
 .sb-nav-item:hover { background: rgba(55, 53, 47, 0.06); }
 .sb-nav-item svg { color: var(--muted); flex: none; }
 .sb-kbd { margin-left: auto; font: 11px/1 inherit; color: var(--faint); border: 1px solid var(--line-soft); border-radius: 4px; padding: 2px 4px; }
@@ -331,3 +331,14 @@ a.sb-foot-button { text-decoration: none; }
 .doc-crumbs + .title-static { margin-left: -12px; padding-left: 4px; }
 /* "Go to original" sits a small gap after the title's box. */
 .title-wrap + .to-original, .title-static + .to-original { margin-left: -9px; }
+
+/* With the sidebar closed, the corner button is over the page: on a narrow
+   window the lists' header makes room for it. */
+@media (max-width: 1180px) {
+  .shell:not(.shell-sidebar) .list-head { padding-left: 36px; }
+}
+
+/* Favorites, empty */
+.sb-fav-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 12px 12px; color: var(--muted); font-size: 13px; text-align: center; }
+.sb-fav-empty-icon { width: 36px; height: 36px; border-radius: 50%; background: rgba(55, 53, 47, 0.06); display: inline-flex; align-items: center; justify-content: center; margin-bottom: 2px; }
+.sb-fav-empty-hint { font-size: 12px; color: var(--faint); }

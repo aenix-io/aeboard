@@ -131,6 +131,13 @@ describe('documents inside documents', () => {
     expect(p.shortcuts.map(d => d.id)).toEqual(['x']);
   });
 
+  it('breaks a loop of parents so both documents still show', () => {
+    const docs = [doc('y', { parent: 'x' }), doc('x', { parent: 'y' })];
+    expect(atFolderLevel(docs).map(d => d.id)).toEqual(['x']);
+    expect(inside(docs, docs[1]).docs.map(d => d.id)).toEqual(['y']);
+    expect(inside(docs, docs[0]).docs.map(d => d.id)).toEqual([]);
+  });
+
   it('puts a document whose parent is gone at the top', () => {
     expect(atFolderLevel([doc('c', { parent: 'gone' })]).map(d => d.id)).toEqual(['c']);
   });

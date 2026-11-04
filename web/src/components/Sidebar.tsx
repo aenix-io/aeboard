@@ -6,7 +6,7 @@ import { atFolderLevel, type Crumb, type Entry, entriesOf, homePath, inside, isI
 import { navigate, type Route } from '../router';
 import { type Container, type Drop, levelAt, resolveDrop, type RowCtx, type Zone } from '../tree';
 import { untitled } from './BoardPage';
-import { BoardIcon, DocsIcon, FolderIcon, McpIcon, PageIcon, SearchIcon, ShortcutBadge, TrashIcon } from './icons';
+import { BoardIcon, DocsIcon, FolderIcon, McpIcon, PageIcon, SearchIcon, ShortcutBadge, StarIcon, TrashIcon } from './icons';
 import { openSearch, toggleFavorite, useFavorites } from '../prefs';
 import { Confirm } from './Confirm';
 import { McpDialog } from './McpDialog';
@@ -566,7 +566,13 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
         {section('Favorites')}
         {!folded.has('Favorites') &&
           (favDocs.length === 0 ? (
-            <div className="sb-empty sb-empty-section">No favorites yet: add them from a document's ⋯ menu.</div>
+            <div className="sb-fav-empty">
+              <span className="sb-fav-empty-icon">
+                <StarIcon on={false} />
+              </span>
+              No favorites
+              <span className="sb-fav-empty-hint">Star a document to keep it here.</span>
+            </div>
           ) : (
             favDocs.map((d, i) =>
               docRow(d, { node: `fav/d:${d.id}`, container: { kind: 'folder', id: '' }, depth: 0, last: i === favDocs.length - 1, up: [] }, false, true),

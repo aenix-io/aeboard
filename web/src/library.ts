@@ -168,15 +168,43 @@ export function placeAmong(
  *  at the top). */
 export function atFolderLevel<D extends DocNode>(docs: D[]): D[] {
   const ids = new Set(docs.map(d => d.id));
-  return docs.filter(d => !d.parent || !ids.has(d.parent));
+  const loose = cycleBreaks(docs);
+  return docs.filter(d => !d.parent || !ids.has(d.parent) || loose.has(d.id));
+}
+
+/** cycleBreaks are the documents that stand at the top to break a loop of
+ *  parents: two replicas, each moving one document inside the other, merge
+ *  into X inside Y inside X, which would hide both. One member of each loop
+ *  (the least id, so every client picks the same) is shown at the top. */
+export function cycleBreaks(docs: DocNode[]): Set<string> {
+  const byID = new Map(docs.map(d => [d.id, d]));
+  const out = new Set<string>();
+  const done = new Set<string>();
+  for (const start of docs) {
+    const path: string[] = [];
+    const onPath = new Set<string>();
+    let at: DocNode | undefined = start;
+    while (at && !done.has(at.id) && !onPath.has(at.id)) {
+      path.push(at.id);
+      onPath.add(at.id);
+      at = at.parent ? byID.get(at.parent) : undefined;
+    }
+    if (at && onPath.has(at.id)) {
+      const loop = path.slice(path.indexOf(at.id));
+      out.add(loop.reduce((a, b) => (a < b ? a : b)));
+    }
+    path.forEach(id => done.add(id));
+  }
+  return out;
 }
 
 /** inside is what shows in document d: the documents that live in it, in
  *  their order, then shortcuts — the documents it links to that live
  *  elsewhere, in link order. */
 export function inside<D extends DocNode>(docs: D[], d: DocNode): { docs: D[]; shortcuts: D[] } {
+  const loose = cycleBreaks(docs);
   const own = docs
-    .filter(x => x.parent === d.id && x.id !== d.id)
+    .filter(x => x.parent === d.id && x.id !== d.id && !loose.has(x.id))
     .sort((a, b) => byRankThenName({ ...a, name: a.title || '\uffff' }, { ...b, name: b.title || '\uffff' }));
   const byID = new Map(docs.map(x => [x.id, x]));
   const seen = new Set<string>();
@@ -200,10 +228,11 @@ export interface Crumb {
  *  the documents it is inside, outermost first (not the document itself). */
 export function homePath(folders: FolderNode[], docs: DocNode[], id: string): Crumb[] {
   const byID = new Map(docs.map(d => [d.id, d]));
+  const loose = cycleBreaks(docs);
   const up: Crumb[] = [];
   const seen = new Set<string>([id]);
   let d = byID.get(id);
-  while (d?.parent && byID.has(d.parent) && !seen.has(d.parent)) {
+  while (d?.parent && byID.has(d.parent) && !seen.has(d.parent) && !loose.has(d.id)) {
     const p = byID.get(d.parent)!;
     seen.add(p.id);
     up.unshift({ kind: 'doc', id: p.id, name: p.title });
