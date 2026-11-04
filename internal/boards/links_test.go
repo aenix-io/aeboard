@@ -193,3 +193,32 @@ func TestFolderWithTrashAndCopyTarget(t *testing.T) {
 		t.Fatal("a failed copy left a document")
 	}
 }
+
+// A trashed document is read-only: no appending, no renaming, no links or
+// children put into it; restored, it is editable again.
+func TestTrashedIsReadOnly(t *testing.T) {
+	s := open(t, DirBackend{Root: t.TempDir()})
+	d, _ := s.Create(CreateInput{Mode: ModePage, Title: "D"}, "")
+	other, _ := s.Create(CreateInput{Mode: ModePage, Title: "O"}, "")
+	yes, no := true, false
+	_, _, _ = s.Update(d.ID, Patch{Trashed: &yes}, "")
+	title := "new"
+	if _, err := s.Append(d.ID, blocks.Parse("x"), ""); !errors.Is(err, ErrTrashed) {
+		t.Fatalf("append: %v", err)
+	}
+	if _, _, err := s.Update(d.ID, Patch{Title: &title}, ""); !errors.Is(err, ErrTrashed) {
+		t.Fatalf("rename: %v", err)
+	}
+	if _, err := s.Link(d.ID, other.ID, ""); !errors.Is(err, ErrTrashed) {
+		t.Fatalf("link into: %v", err)
+	}
+	if _, err := s.Create(CreateInput{Mode: ModePage, Parent: d.ID}, ""); !errors.Is(err, ErrTrashed) {
+		t.Fatalf("child into: %v", err)
+	}
+	if m, _, err := s.Update(d.ID, Patch{Trashed: &no, Title: &title}, ""); err != nil || m.Title != "new" {
+		t.Fatalf("restore and rename: %+v %v", m, err)
+	}
+	if _, err := s.Append(d.ID, blocks.Parse("x"), ""); err != nil {
+		t.Fatalf("append after restore: %v", err)
+	}
+}

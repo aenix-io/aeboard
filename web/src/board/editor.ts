@@ -89,10 +89,18 @@ export function getWorkspace(user: User): DocsWorkspace {
 
 let currentDocID = '';
 
+/** editorCatalog is what the editor knows of the documents: those not in
+ *  the trash, and the open one whatever it is. A link to a document the
+ *  editor does not know is drawn as deleted (greyed, struck through, as in
+ *  AFFiNE), so a trashed document's links show it, and come back on restore. */
+export function editorCatalog<T extends { id: string; trashed?: string }>(all: T[], open: string): T[] {
+  return all.filter(d => !d.trashed || d.id === open);
+}
+
 /** refreshCatalog loads the document list the link menu offers. */
-export async function refreshCatalog(ws: DocsWorkspace): Promise<void> {
+export async function refreshCatalog(ws: DocsWorkspace, open: string): Promise<void> {
   const list = await api.listBoards();
-  ws.setCatalog(list.boards as CatalogEntry[]);
+  ws.setCatalog(editorCatalog(list.boards, open) as CatalogEntry[]);
 }
 
 // openDoc joins the document's room, waits for the first sync and mounts
@@ -100,7 +108,7 @@ export async function refreshCatalog(ws: DocsWorkspace): Promise<void> {
 export async function openDoc(id: string, user: User, mount: HTMLElement, opts: OpenOptions = {}): Promise<DocSession> {
   defineElements();
   const ws = getWorkspace(user);
-  await refreshCatalog(ws);
+  await refreshCatalog(ws, id);
   const doc = ws.live(id);
   if (!doc) throw new Error('document not found');
   currentDocID = id;
@@ -117,7 +125,9 @@ export async function openDoc(id: string, user: User, mount: HTMLElement, opts: 
   // two clients doing that at once would leave it with two roots.
   if (!store.root) throw new Error('the document has no root block (was it created through the server?)');
   store.resetHistory();
-  if (opts.readonly) store.readonly = true;
+  // Set both ways: the store outlives a session, and a document restored
+  // from the trash is opened again editable.
+  store.readonly = !!opts.readonly;
 
   let mode: DocMode = opts.mode ?? (ws.modeOf(id) === 'page' ? 'page' : 'edgeless');
   const modeChanged = new Subject<DocMode>();

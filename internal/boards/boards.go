@@ -290,9 +290,14 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 		return Meta{}, fmt.Errorf("%w: no folder %q", ErrInvalid, in.Folder)
 	}
 	if in.Parent != "" {
-		if _, ok := s.liveLocked(in.Parent); !ok {
+		p, ok := s.liveLocked(in.Parent)
+		if !ok {
 			s.mu.Unlock()
 			return Meta{}, fmt.Errorf("%w: no document %q", ErrInvalid, in.Parent)
+		}
+		if !p.meta.Trashed.IsZero() {
+			s.mu.Unlock()
+			return Meta{}, ErrTrashed
 		}
 		in.Folder = ""
 	}
@@ -333,6 +338,12 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 	}
 	m := b.meta
 	var upd []byte
+	// The title is the document's own text: a trashed one keeps it, unless
+	// the same patch restores it.
+	if p.Title != nil && !m.Trashed.IsZero() && (p.Trashed == nil || *p.Trashed) {
+		s.mu.Unlock()
+		return Meta{}, nil, ErrTrashed
+	}
 	if p.Title != nil {
 		title := strings.TrimSpace(*p.Title)
 		cur := b.state
@@ -548,6 +559,9 @@ func (s *Store) Append(id string, specs []blocks.Spec, actor string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	if !m.Trashed.IsZero() {
+		return nil, ErrTrashed
+	}
 	state, err := s.LoadState(id)
 	if err != nil {
 		return nil, err
@@ -598,8 +612,10 @@ func (s *Store) Copy(id, into, actor string) (Meta, []byte, error) {
 	if into == "" || into == id {
 		return Meta{}, nil, fmt.Errorf("%w: a copy goes inside another document", ErrInvalid)
 	}
-	if _, err := s.Get(into); err != nil {
+	if t, err := s.Get(into); err != nil {
 		return Meta{}, nil, err
+	} else if !t.Trashed.IsZero() {
+		return Meta{}, nil, ErrTrashed
 	}
 	src, err := s.Get(id)
 	if err != nil {
@@ -642,8 +658,17 @@ func (s *Store) Unlink(parent, child, actor string) ([]byte, error) {
 	})
 }
 
+// ErrTrashed is returned for changing the content of a document in the
+// trash: it is read-only until it is restored.
+var ErrTrashed = errors.New("the document is in the trash")
+
 // editState applies what edit makes of a document's state (nil: nothing).
 func (s *Store) editState(id, actor string, edit func([]byte) ([]byte, error)) ([]byte, error) {
+	if m, err := s.Get(id); err != nil {
+		return nil, err
+	} else if !m.Trashed.IsZero() {
+		return nil, ErrTrashed
+	}
 	state, err := s.LoadState(id)
 	if err != nil {
 		return nil, err
