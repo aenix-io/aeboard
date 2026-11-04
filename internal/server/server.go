@@ -126,6 +126,8 @@ func (s *Server) listBoards(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
 	var in struct {
+		ID    string   `json:"id"`
+		Mode  string   `json:"mode"`
 		Title string   `json:"title"`
 		Tags  []string `json:"tags"`
 	}
@@ -133,7 +135,15 @@ func (s *Server) createBoard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Create(in.Title, in.Tags, s.login(r))
+	m, err := s.store.Create(boards.CreateInput{ID: in.ID, Mode: in.Mode, Title: in.Title, Tags: in.Tags}, s.login(r))
+	if errors.Is(err, boards.ErrExists) {
+		writeError(w, http.StatusConflict, "a document with this id exists")
+		return
+	}
+	if errors.Is(err, boards.ErrInvalid) {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err != nil {
 		s.log.Error("create board", "err", err)
 		writeError(w, http.StatusInternalServerError, "could not create the board")
@@ -157,10 +167,14 @@ func (s *Server) patchBoard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	m, err := s.store.Update(r.PathValue("id"), p, s.login(r))
+	m, upd, err := s.store.Update(r.PathValue("id"), p, s.login(r))
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	if upd != nil {
+		// The title lives in the document: send it to whoever has it open.
+		s.ApplyRemote(r.Context(), map[string][]byte{m.ID: upd})
 	}
 	writeJSON(w, http.StatusOK, m)
 }

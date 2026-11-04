@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/reearth/ygo/crdt"
+
+	"github.com/aenix-io/aeboard/internal/seed"
 )
 
 // editOf returns a Yjs update that, applied on top of state, sets
@@ -100,7 +102,7 @@ func open(t *testing.T, b Backend) *Store {
 func TestCreateStartsFromSeedAndSurvivesRestartThroughTheDirBackend(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, DirBackend{Root: dir})
-	m, err := s.Create("  Roadmap ", []string{"q4", " Team ", "q4", ""}, "kvaps")
+	m, err := s.Create(CreateInput{Title: "  Roadmap ", Tags: []string{"q4", " Team ", "q4", ""}}, "kvaps")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,11 +132,90 @@ func TestCreateStartsFromSeedAndSurvivesRestartThroughTheDirBackend(t *testing.T
 	}
 }
 
-func TestEmptyTitleBecomesUntitled(t *testing.T) {
+// An empty title stays empty (the SPA shows "Untitled"); a new document
+// is a board unless asked otherwise.
+func TestEmptyTitleStaysEmptyAndModeDefaultsToBoard(t *testing.T) {
 	s := open(t, &countingBackend{})
-	m, _ := s.Create("   ", nil, "")
-	if m.Title != "Untitled board" || m.Tags == nil {
+	m, _ := s.Create(CreateInput{Title: "   "}, "")
+	if m.Title != "" || m.Tags == nil || m.Mode != ModeEdgeless {
 		t.Fatalf("meta = %+v", m)
+	}
+	st, _ := s.LoadState(m.ID)
+	if DocTitle(st) != "" {
+		t.Fatalf("doc title = %q", DocTitle(st))
+	}
+}
+
+// The title lives in the document: creating writes it there, an edit of the
+// document's title text renames the catalog entry, and renaming through
+// the API rewrites the text and hands back the update for live rooms.
+func TestTitleLivesInTheDocument(t *testing.T) {
+	s := open(t, &countingBackend{})
+	m, _ := s.Create(CreateInput{Title: "Plan"}, "")
+	st, _ := s.LoadState(m.ID)
+	if DocTitle(st) != "Plan" {
+		t.Fatalf("doc title = %q", DocTitle(st))
+	}
+
+	// A browser types into the title.
+	upd, _ := titleUpdate(st, "Plan v2")
+	if _, err := s.ApplyUpdate(m.ID, upd); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(m.ID); got.Title != "Plan v2" {
+		t.Fatalf("catalog title = %q", got.Title)
+	}
+
+	// The API renames it.
+	title := "Plan v3"
+	got, live, err := s.Update(m.ID, Patch{Title: &title}, "")
+	if err != nil || got.Title != "Plan v3" || live == nil {
+		t.Fatalf("update = %+v %v live=%v", got, err, live != nil)
+	}
+	st, _ = s.LoadState(m.ID)
+	if DocTitle(st) != "Plan v3" {
+		t.Fatalf("doc title after rename = %q", DocTitle(st))
+	}
+	// A browser holding the v2 state catches up with the live update.
+	doc := crdt.New()
+	_ = crdt.ApplyUpdateV1(doc, st, nil)
+	if _, live2, _ := s.Update(m.ID, Patch{Title: &title}, ""); live2 != nil {
+		t.Fatalf("renaming to the same title produced an update")
+	}
+}
+
+func TestPagesAndClientChosenIDs(t *testing.T) {
+	s := open(t, &countingBackend{})
+	m, err := s.Create(CreateInput{ID: "abcdefghjk", Mode: ModePage, Title: "Notes"}, "")
+	if err != nil || m.ID != "abcdefghjk" || m.Mode != ModePage {
+		t.Fatalf("create page = %+v %v", m, err)
+	}
+	st, _ := s.LoadState(m.ID)
+	if keys := blockKeys(t, st); len(keys) != 4 {
+		t.Fatalf("page seed blocks = %v, want page, surface, note, paragraph", keys)
+	}
+	if _, err := s.Create(CreateInput{ID: "abcdefghjk"}, ""); !errors.Is(err, ErrExists) {
+		t.Fatalf("duplicate id: %v", err)
+	}
+	for _, bad := range []CreateInput{{ID: "../x"}, {Mode: "spreadsheet"}} {
+		if _, err := s.Create(bad, ""); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("create %+v: %v", bad, err)
+		}
+	}
+}
+
+// Documents stored before titles lived in the document had theirs in the
+// catalog only; loading writes it into the document (and dirties it).
+func TestLegacyCatalogTitleMovesIntoTheDocument(t *testing.T) {
+	be := &countingBackend{stored: map[string]Snapshot{}}
+	be.stored["abcdefghjk"] = Snapshot{Meta: Meta{ID: "abcdefghjk", Title: "Old board"}, State: seed.Update()}
+	s := open(t, be)
+	st, _ := s.LoadState("abcdefghjk")
+	if DocTitle(st) != "Old board" || s.Pending() != 1 {
+		t.Fatalf("doc title = %q pending = %d", DocTitle(st), s.Pending())
+	}
+	if m, _ := s.Get("abcdefghjk"); m.Mode != ModeEdgeless {
+		t.Fatalf("legacy mode = %q", m.Mode)
 	}
 }
 
@@ -143,7 +224,7 @@ func TestEmptyTitleBecomesUntitled(t *testing.T) {
 func TestManyEditsCoalesceIntoOneWrite(t *testing.T) {
 	be := &countingBackend{}
 	s := open(t, be)
-	m, _ := s.Create("b", nil, "alice")
+	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "alice")
 	for i := range 100 {
 		st, _ := s.LoadState(m.ID)
 		who := []string{"alice", "bob"}[i%2]
@@ -176,7 +257,7 @@ func TestManyEditsCoalesceIntoOneWrite(t *testing.T) {
 func TestRepeatedUpdateIsNotAChange(t *testing.T) {
 	be := &countingBackend{}
 	s := open(t, be)
-	m, _ := s.Create("b", nil, "")
+	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
 	_ = s.Flush(context.Background())
 	st, _ := s.LoadState(m.ID)
 	upd := editOf(t, st, 7, "shape-1", "rect")
@@ -196,7 +277,7 @@ func TestRepeatedUpdateIsNotAChange(t *testing.T) {
 func TestEditDuringFlushStaysDirty(t *testing.T) {
 	be := &countingBackend{}
 	s := open(t, be)
-	m, _ := s.Create("b", nil, "")
+	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
 	be.during = func() {
 		be.during = nil
 		st, _ := s.LoadState(m.ID)
@@ -216,7 +297,7 @@ func TestEditDuringFlushStaysDirty(t *testing.T) {
 
 func TestConcurrentEditsFromDivergedReplicasMerge(t *testing.T) {
 	s := open(t, &countingBackend{})
-	m, _ := s.Create("b", nil, "")
+	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
 	base, _ := s.LoadState(m.ID)
 	a := editOf(t, base, 11, "from-a", "x")
 	b := editOf(t, base, 12, "from-b", "y")
@@ -235,12 +316,15 @@ func TestMergeRemote(t *testing.T) {
 	clock := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	s := open(t, &countingBackend{})
 	s.now = func() time.Time { return clock }
-	m, _ := s.Create("local title", []string{"a"}, "")
+	m, _ := s.Create(CreateInput{Title: "local title", Tags: []string{"a"}}, "")
 	_ = s.Flush(context.Background())
 	base, _ := s.LoadState(m.ID)
 
 	_, _ = s.ApplyUpdate(m.ID, editOf(t, base, 11, "ours", "x"))
 	theirs, _ := MergeStates(base, editOf(t, base, 12, "theirs", "y"))
+	// The other replica also renamed it — in the document, where titles live.
+	rename, _ := titleUpdate(theirs, "remote title")
+	theirs, _ = MergeStates(theirs, rename)
 	remoteMeta := m
 	remoteMeta.Title = "remote title"
 	remoteMeta.Updated = clock.Add(time.Hour)
@@ -281,7 +365,7 @@ func TestOlderRemoteMetadataDoesNotWin(t *testing.T) {
 	clock := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	s := open(t, &countingBackend{})
 	s.now = func() time.Time { return clock }
-	m, _ := s.Create("mine", nil, "")
+	m, _ := s.Create(CreateInput{Title: "mine", Tags: nil}, "")
 	old := m
 	old.Title = "stale"
 	old.Updated = clock.Add(-time.Hour)
@@ -299,7 +383,7 @@ func TestFlusherPolicy(t *testing.T) {
 	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
 	advance := func(d time.Duration) { mu.Lock(); clock = clock.Add(d); mu.Unlock() }
 
-	m, _ := s.Create("b", nil, "")
+	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -353,14 +437,14 @@ func TestListNewestFirstAndTagsUnion(t *testing.T) {
 	s := open(t, &countingBackend{})
 	clock := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { clock = clock.Add(time.Minute); return clock }
-	old, _ := s.Create("old", []string{"ops"}, "")
-	_, _ = s.Create("new", []string{"design", "Ops"}, "")
+	old, _ := s.Create(CreateInput{Title: "old", Tags: []string{"ops"}}, "")
+	_, _ = s.Create(CreateInput{Title: "new", Tags: []string{"design", "Ops"}}, "")
 	list := s.List()
 	if len(list) != 2 || list[0].Title != "new" {
 		t.Fatalf("list = %+v", list)
 	}
 	tags := []string{"ops", "retro"}
-	_, _ = s.Update(old.ID, Patch{Tags: &tags}, "")
+	_, _, _ = s.Update(old.ID, Patch{Tags: &tags}, "")
 	if s.List()[0].ID != old.ID {
 		t.Fatalf("updated board not first")
 	}
@@ -378,14 +462,14 @@ func TestUnknownBoard(t *testing.T) {
 	if _, err := s.ApplyUpdate("0000000000", nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ApplyUpdate: %v", err)
 	}
-	if _, err := s.Update("0000000000", Patch{}, ""); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.Update("0000000000", Patch{}, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Update: %v", err)
 	}
 }
 
 func TestDocJSONIsReadable(t *testing.T) {
 	s := open(t, &countingBackend{})
-	m, _ := s.Create("b", nil, "")
+	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
 	st, _ := s.LoadState(m.ID)
 	out, err := DocJSON(st)
 	if err != nil {
@@ -409,7 +493,7 @@ func TestValidID(t *testing.T) {
 func TestLegacyBinaryStateIsReadThenReplacedByText(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, DirBackend{Root: dir})
-	m, _ := s.Create("old", nil, "")
+	m, _ := s.Create(CreateInput{Title: "old", Tags: nil}, "")
 	st, _ := s.LoadState(m.ID)
 	st, _ = MergeStates(st, editOf(t, st, 9, "kept", "v"))
 	board := filepath.Join(dir, BoardPath(m.ID))
@@ -425,7 +509,7 @@ func TestLegacyBinaryStateIsReadThenReplacedByText(t *testing.T) {
 	if !slices.Contains(blockKeys(t, got), "kept") {
 		t.Fatalf("legacy state not loaded")
 	}
-	_, _ = re.Update(m.ID, Patch{}, "")
+	_, _, _ = re.Update(m.ID, Patch{}, "")
 	if err := re.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}

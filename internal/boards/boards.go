@@ -35,11 +35,37 @@ var ErrNotFound = errors.New("board not found")
 
 // Meta is a board's catalogue entry.
 type Meta struct {
-	ID      string    `json:"id"`
+	ID string `json:"id"`
+	// Mode is how the document opens: "edgeless" (a board) or "page".
+	Mode string `json:"mode"`
+	// Title mirrors the title written in the document itself (its root
+	// block's title); the store keeps the two in step.
 	Title   string    `json:"title"`
 	Tags    []string  `json:"tags"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
+}
+
+// Document modes.
+const (
+	ModeEdgeless = "edgeless"
+	ModePage     = "page"
+)
+
+// ErrExists is returned when a document is created under an id in use.
+var ErrExists = errors.New("document already exists")
+
+// ErrInvalid is returned for a create request that names a bad id or mode.
+var ErrInvalid = errors.New("invalid document")
+
+// CreateInput is a new document.
+type CreateInput struct {
+	// ID is chosen by the client when it needs the id before the round trip
+	// (a page created from the editor's link menu); empty mints one.
+	ID    string
+	Mode  string
+	Title string
+	Tags  []string
 }
 
 // Patch changes a board's metadata; nil fields are left as they are.
@@ -109,11 +135,28 @@ func Open(ctx context.Context, backend Backend) (*Store, error) {
 		listeners: map[int]func(){},
 	}
 	for _, sn := range snaps {
-		m := sn.Meta
-		m.Tags = normTags(m.Tags)
-		s.boards[m.ID] = &board{meta: m, state: sn.State}
+		b := &board{meta: sn.Meta, state: sn.State}
+		normMeta(&b.meta)
+		// Documents stored before titles lived in the document carry their
+		// title only in the catalog: write it into the document once.
+		if b.meta.Title != "" && len(b.state) > 0 && DocTitle(b.state) == "" {
+			if upd, err := titleUpdate(b.state, b.meta.Title); err == nil && upd != nil {
+				if merged, err := MergeStates(b.state, upd); err == nil && merged != nil {
+					b.state = merged
+					s.markLocked(b, "")
+				}
+			}
+		}
+		s.boards[b.meta.ID] = b
 	}
 	return s, nil
+}
+
+func normMeta(m *Meta) {
+	m.Tags = normTags(m.Tags)
+	if m.Mode != ModePage {
+		m.Mode = ModeEdgeless
+	}
 }
 
 // List returns every board, most recently updated first.
@@ -144,20 +187,51 @@ func (s *Store) Get(id string) (Meta, error) {
 	return cloneMeta(b.meta), nil
 }
 
-// Create adds a board that starts from the seed state. actor may be empty.
-func (s *Store) Create(title string, tags []string, actor string) (Meta, error) {
+// Create adds a document that starts from its mode's seed state, with the
+// title written into it. actor may be empty.
+func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
+	if in.Mode == "" {
+		in.Mode = ModeEdgeless
+	}
+	if in.Mode != ModeEdgeless && in.Mode != ModePage {
+		return Meta{}, fmt.Errorf("%w: mode %q", ErrInvalid, in.Mode)
+	}
+	if in.ID != "" && !ValidID(in.ID) {
+		return Meta{}, fmt.Errorf("%w: id %q", ErrInvalid, in.ID)
+	}
+	title := strings.TrimSpace(in.Title)
+	state := seed.For(in.Mode)
+	if title != "" {
+		upd, err := titleUpdate(state, title)
+		if err != nil {
+			return Meta{}, err
+		}
+		if upd != nil {
+			merged, err := MergeStates(state, upd)
+			if err != nil {
+				return Meta{}, err
+			}
+			if merged != nil {
+				state = merged
+			}
+		}
+	}
+
 	s.mu.Lock()
-	id := newID()
-	for s.boards[id] != nil {
+	id := in.ID
+	if id == "" {
 		id = newID()
+		for s.boards[id] != nil {
+			id = newID()
+		}
+	} else if s.boards[id] != nil {
+		s.mu.Unlock()
+		return Meta{}, ErrExists
 	}
 	now := s.now().UTC()
 	b := &board{
-		meta:  Meta{ID: id, Title: strings.TrimSpace(title), Tags: normTags(tags), Created: now, Updated: now},
-		state: seed.Update(),
-	}
-	if b.meta.Title == "" {
-		b.meta.Title = "Untitled board"
+		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Tags: normTags(in.Tags), Created: now, Updated: now},
+		state: state,
 	}
 	s.boards[id] = b
 	s.markLocked(b, actor)
@@ -167,19 +241,40 @@ func (s *Store) Create(title string, tags []string, actor string) (Meta, error) 
 	return m, nil
 }
 
-// Update applies a metadata patch.
-func (s *Store) Update(id string, p Patch, actor string) (Meta, error) {
+// Update applies a metadata patch. A new title is written into the
+// document; the returned update (nil when the title did not change) is what
+// the document's live room must be sent.
+func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 	s.mu.Lock()
 	b, ok := s.boards[id]
 	if !ok {
 		s.mu.Unlock()
-		return Meta{}, ErrNotFound
+		return Meta{}, nil, ErrNotFound
 	}
 	m := b.meta
+	var upd []byte
 	if p.Title != nil {
-		if t := strings.TrimSpace(*p.Title); t != "" {
-			m.Title = t
+		title := strings.TrimSpace(*p.Title)
+		cur := b.state
+		if len(cur) == 0 {
+			cur = seed.For(m.Mode)
 		}
+		var err error
+		if upd, err = titleUpdate(cur, title); err != nil {
+			s.mu.Unlock()
+			return Meta{}, nil, err
+		}
+		if upd != nil {
+			merged, err := MergeStates(cur, upd)
+			if err != nil {
+				s.mu.Unlock()
+				return Meta{}, nil, err
+			}
+			if merged != nil {
+				b.state = merged
+			}
+		}
+		m.Title = title
 	}
 	if p.Tags != nil {
 		m.Tags = normTags(*p.Tags)
@@ -190,7 +285,7 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, error) {
 	out := cloneMeta(m)
 	s.mu.Unlock()
 	s.notify()
-	return out, nil
+	return out, upd, nil
 }
 
 // Tags returns every tag in use, sorted. Tags are case-insensitive: "Ops"
@@ -221,7 +316,7 @@ func (s *Store) LoadState(id string) ([]byte, error) {
 		return nil, ErrNotFound
 	}
 	if len(b.state) == 0 {
-		return seed.Update(), nil
+		return seed.For(b.meta.Mode), nil
 	}
 	return bytes.Clone(b.state), nil
 }
@@ -239,7 +334,7 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 	}
 	cur := b.state
 	if len(cur) == 0 {
-		cur = seed.Update()
+		cur = seed.For(b.meta.Mode)
 	}
 	merged, err := MergeStates(cur, update)
 	if err != nil {
@@ -251,6 +346,7 @@ func (s *Store) ApplyUpdate(id string, update []byte, editors ...string) (bool, 
 		return false, nil
 	}
 	b.state = merged
+	b.meta.Title = DocTitle(merged)
 	b.meta.Updated = s.now().UTC()
 	if len(editors) == 0 {
 		s.markLocked(b, "")
@@ -284,13 +380,13 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 		b, ok := s.boards[id]
 		if !ok {
 			m := r.Meta
-			m.Tags = normTags(m.Tags)
+			normMeta(&m)
 			s.boards[id] = &board{meta: m, state: bytes.Clone(r.State)}
 			continue
 		}
 		if r.Meta.Updated.After(b.meta.Updated) {
 			m := r.Meta
-			m.Tags = normTags(m.Tags)
+			normMeta(&m)
 			b.meta = m
 		}
 		if len(r.State) == 0 {
@@ -298,7 +394,7 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 		}
 		cur := b.state
 		if len(cur) == 0 {
-			cur = seed.Update()
+			cur = seed.For(b.meta.Mode)
 		}
 		merged, err := MergeStates(cur, r.State)
 		if err != nil {
@@ -312,6 +408,9 @@ func (s *Store) MergeRemote(remotes []Remote) (map[string][]byte, error) {
 			return gained, fmt.Errorf("board %s: %w", id, err)
 		}
 		b.state = merged
+		if t := DocTitle(merged); t != "" {
+			b.meta.Title = t
+		}
 		gained[id] = diff
 	}
 	return gained, nil
@@ -344,7 +443,7 @@ func (s *Store) Snapshot(id string) (Snapshot, error) {
 func snapshotOf(b *board) Snapshot {
 	state := b.state
 	if len(state) == 0 {
-		state = seed.Update()
+		state = seed.For(b.meta.Mode)
 	}
 	eds := make([]string, 0, len(b.editors))
 	for e := range b.editors {

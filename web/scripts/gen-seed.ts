@@ -8,8 +8,12 @@
 // twice (or merging two replicas that both started from it) is a no-op —
 // identical Yjs items, not duplicates.
 //
-// Regenerate (only when BlockSuite's page/surface schema changes):
-//   npx vite-node scripts/gen-seed.ts > ../internal/seed/seed.bin
+// A page additionally holds one note with an empty paragraph, the place the
+// text of a page goes.
+//
+// Regenerate (only when BlockSuite's schema changes):
+//   npx vite-node scripts/gen-seed.ts board > ../internal/seed/seed.bin
+//   npx vite-node scripts/gen-seed.ts page  > ../internal/seed/page.bin
 import { Text } from '@blocksuite/affine/store';
 import { getTestStoreManager } from '@blocksuite/integration-test/store';
 import { Awareness } from 'y-protocols/awareness.js';
@@ -28,9 +32,15 @@ const ws = new BoardWorkspace({
 });
 ws.storeExtensions = getTestStoreManager().get('store');
 const store = ws.getDoc('seed')!.getStore();
+const kind = process.argv[2] ?? 'board';
+if (kind !== 'board' && kind !== 'page') throw new Error(`unknown seed kind ${kind}`);
 store.load(() => {
   const rootId = store.addBlock('affine:page', { title: new Text() }, undefined);
   store.addBlock('affine:surface', {}, rootId);
+  if (kind === 'page') {
+    const noteId = store.addBlock('affine:note', {}, rootId);
+    store.addBlock('affine:paragraph', {}, noteId);
+  }
 });
 // BlockSuite keeps timers alive (blob sync), so exit explicitly once written.
 process.stdout.write(Y.encodeStateAsUpdate(doc), () => process.exit(0));

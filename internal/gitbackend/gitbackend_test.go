@@ -112,7 +112,7 @@ func TestBoardsReachTheOtherReplica(t *testing.T) {
 	a := newReplica(t, remote, t.TempDir())
 	b := newReplica(t, remote, t.TempDir())
 
-	m, _ := a.store.Create("Roadmap", []string{"q4"}, "alice")
+	m, _ := a.store.Create(boards.CreateInput{Title: "Roadmap", Tags: []string{"q4"}}, "alice")
 	a.edit(t, m.ID, 11, "from-a")
 	a.flushAndSync(t)
 	if st := a.backend.Status(); st.Unpushed != 0 {
@@ -135,7 +135,7 @@ func TestBoardsReachTheOtherReplica(t *testing.T) {
 func TestConcurrentEditsOfOneBoardMerge(t *testing.T) {
 	remote := newRemote(t)
 	a := newReplica(t, remote, t.TempDir())
-	m, _ := a.store.Create("Shared", nil, "alice")
+	m, _ := a.store.Create(boards.CreateInput{Title: "Shared", Tags: nil}, "alice")
 	a.flushAndSync(t)
 	b := newReplica(t, remote, t.TempDir())
 	b.backend.SyncOnce(context.Background())
@@ -164,8 +164,8 @@ func TestConcurrentEditsOfDifferentBoards(t *testing.T) {
 	remote := newRemote(t)
 	a := newReplica(t, remote, t.TempDir())
 	b := newReplica(t, remote, t.TempDir())
-	ma, _ := a.store.Create("A's", nil, "")
-	mb, _ := b.store.Create("B's", nil, "")
+	ma, _ := a.store.Create(boards.CreateInput{Title: "A's", Tags: nil}, "")
+	mb, _ := b.store.Create(boards.CreateInput{Title: "B's", Tags: nil}, "")
 	a.flushAndSync(t)
 	b.flushAndSync(t)
 	a.backend.SyncOnce(context.Background())
@@ -182,7 +182,7 @@ func TestUnpushedCommitsSurviveRestart(t *testing.T) {
 	remote := newRemote(t)
 	dir := t.TempDir()
 	a := newReplica(t, remote, dir)
-	m, _ := a.store.Create("Offline", nil, "")
+	m, _ := a.store.Create(boards.CreateInput{Title: "Offline", Tags: nil}, "")
 	if err := a.store.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestUnpushedCommitsSurviveRestart(t *testing.T) {
 func TestCommitsAreAttributed(t *testing.T) {
 	remote := newRemote(t)
 	a := newReplica(t, remote, t.TempDir())
-	m, _ := a.store.Create("b", nil, "alice")
+	m, _ := a.store.Create(boards.CreateInput{Title: "b", Tags: nil}, "alice")
 	a.edit(t, m.ID, 3, "x") // by user-x
 	_ = a.store.Flush(context.Background())
 	c, err := a.backend.repo.CommitObject(a.backend.repo.Head())
