@@ -221,6 +221,14 @@ export function BoardPage({ id, userName, canWrite, lead, whoami, status }: Prop
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board?.id, userName, canWrite]);
 
+  // The editor's own document list follows the app's (fresh from the status
+  // stream): a document deleted meanwhile drops its room in the editor, so
+  // no socket keeps retrying it (that holds up every other socket).
+  useEffect(() => {
+    if (!cat.docs) return;
+    session.current?.workspace.setCatalog([...cat.docs, ...cat.trash]);
+  }, [cat.docs, cat.trash]);
+
   const switchView = (v: View) => {
     setView(v);
     session.current?.setMode(v);

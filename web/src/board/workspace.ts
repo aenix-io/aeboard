@@ -46,6 +46,10 @@ export interface WorkspaceOptions {
   /** Creates a document on the server (a page made from the link menu); the
    *  document's room is not joined before it resolves. */
   create: (id: string) => Promise<void>;
+  /** exists asks the server whether a document is there (false only for a
+   *  definite no). A room that keeps refusing its socket is checked with it,
+   *  and given up when the document is gone. */
+  exists?: (id: string) => Promise<boolean>;
   /** Where the sync rooms live; without it documents never connect (the
    *  seed generator builds documents offline). */
   syncURL?: string;
@@ -112,7 +116,13 @@ export class DocsWorkspace implements Workspace {
       }
     }
     for (const m of [...this.meta.docMetas]) {
-      if (!seen.has(m.id) && !this._docs.get(m.id)?.creating) this.meta.removeDocMeta(m.id);
+      if (seen.has(m.id) || this._docs.get(m.id)?.creating) continue;
+      // Gone (deleted for good): its room refuses the socket, and a socket
+      // retrying it holds up every other one (browsers queue sockets to a
+      // host behind one still connecting, and delay them after failures).
+      this._docs.get(m.id)?.disconnect();
+      this._docs.delete(m.id);
+      this.meta.removeDocMeta(m.id);
     }
   }
 
@@ -152,6 +162,9 @@ export class DocsWorkspace implements Workspace {
     this.blobSync.stop();
   }
 }
+
+/** After this many closes in a row without opening, a room is checked. */
+const GIVE_UP_AFTER = 3;
 
 /** One document: its Y.Doc, and — once loaded — its room on the server. */
 export class LiveDoc implements Doc {
@@ -226,6 +239,18 @@ export class LiveDoc implements Doc {
         if (!synced || this._synced) return;
         this._synced = true;
         this._syncWaiters.splice(0).forEach(f => f());
+      });
+      // A socket that keeps closing before it ever opens: ask whether the
+      // document is still there, and stop retrying one that is gone.
+      let failures = 0;
+      this._provider.on('status', ({ status }: { status: string }) => {
+        if (status === 'connected') failures = 0;
+      });
+      this._provider.on('connection-close', () => {
+        if (this._provider?.wsconnected || ++failures !== GIVE_UP_AFTER) return;
+        void this._ws.opts.exists?.(this.id).then(there => {
+          if (!there) this.disconnect();
+        });
       });
     };
     if (this._creating) {

@@ -70,6 +70,13 @@ export function getWorkspace(user: User): DocsWorkspace {
     // content, so any document's route serves them; the workspace uses the
     // one of whichever document asks.
     blobSource: new ServerBlobSource(() => currentDocID),
+    exists: async id => {
+      try {
+        return (await fetch(`/api/v1/boards/${id}`, { credentials: 'same-origin' })).status !== 404;
+      } catch {
+        return true; // offline: no answer is not a no
+      }
+    },
     create: async id => {
       // The editor makes a document from inside the open one ("@" → new
       // doc, "turn into linked doc"): it lives there.
