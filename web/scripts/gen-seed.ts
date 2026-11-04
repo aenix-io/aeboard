@@ -16,22 +16,19 @@
 //   npx vite-node scripts/gen-seed.ts page  > ../internal/seed/page.bin
 import { Text } from '@blocksuite/affine/store';
 import { getTestStoreManager } from '@blocksuite/integration-test/store';
-import { Awareness } from 'y-protocols/awareness.js';
 import * as Y from 'yjs';
 
-import { BoardWorkspace } from '../src/board/workspace';
+import { DocsWorkspace } from '../src/board/workspace';
 
-const doc = new Y.Doc({ guid: 'seed' });
-doc.clientID = 0;
 let n = 0;
-const ws = new BoardWorkspace({
-  id: 'seed',
-  spaceDoc: doc,
-  awareness: new Awareness(new Y.Doc()),
-  idGenerator: () => `seed-${n++}`,
-});
+// No syncURL: the document is built offline.
+const ws = new DocsWorkspace({ user: { name: 'seed' }, create: async () => {}, idGenerator: () => `seed-${n++}` });
 ws.storeExtensions = getTestStoreManager().get('store');
-const store = ws.getDoc('seed')!.getStore();
+ws.setCatalog([{ id: 'seed', title: '', mode: 'edgeless', created: new Date(0).toISOString() }]);
+const live = ws.live('seed')!;
+const doc = live.spaceDoc;
+doc.clientID = 0;
+const store = live.getStore();
 const kind = process.argv[2] ?? 'board';
 if (kind !== 'board' && kind !== 'page') throw new Error(`unknown seed kind ${kind}`);
 store.load(() => {

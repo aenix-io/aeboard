@@ -135,3 +135,13 @@ a.button.primary:hover { filter: brightness(0.95); }
 .signout { display: inline; margin: 0; }
 .chip-muted { color: var(--muted); font-size: 11px; padding: 0 7px; line-height: 16px; }
 .title-static { margin: 0; padding: 4px 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* segmented switch (Board | Page, All | Boards | Pages), as aeman's */
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.segmented .segment { border: none; border-radius: 0; padding: 3px 10px; font-size: 12px; background: var(--bg); color: var(--muted); }
+.segmented .segment + .segment { border-left: 1px solid var(--line); }
+.segmented .segment-active { background: var(--bg-soft); color: var(--fg); font-weight: 600; }
+.list-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.board-title { display: flex; align-items: center; gap: 6px; }
+.kind { display: inline-flex; color: var(--muted); flex: none; }
+.kind-page { color: var(--accent); }

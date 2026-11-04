@@ -53,3 +53,11 @@ export function parseTags(input: string): string[] {
   }
   return out;
 }
+
+/** The list's kind switch: every document, only boards, or only pages. */
+export type KindFilter = 'all' | 'edgeless' | 'page';
+
+/** filterKind keeps the documents of one kind (all of them for "all"). */
+export function filterKind<T extends { mode: 'edgeless' | 'page' }>(docs: T[], kind: KindFilter): T[] {
+  return kind === 'all' ? docs : docs.filter(d => d.mode === kind);
+}

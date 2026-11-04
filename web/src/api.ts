@@ -2,6 +2,7 @@
 
 export interface Board {
   id: string;
+  mode: 'edgeless' | 'page';
   title: string;
   tags: string[];
   created: string;
@@ -81,7 +82,8 @@ export const api = {
   },
   listBoards: () => call<BoardList>('GET', '/boards'),
   getBoard: (id: string) => call<Board>('GET', `/boards/${id}`),
-  createBoard: (title: string, tags: string[]) => call<Board>('POST', '/boards', { title, tags }),
+  createBoard: (doc: { id?: string; mode?: 'edgeless' | 'page'; title?: string; tags?: string[]; blank?: boolean }) =>
+    call<Board>('POST', '/boards', doc),
   updateBoard: (id: string, patch: { title?: string; tags?: string[] }) =>
     call<Board>('PATCH', `/boards/${id}`, patch),
 };

@@ -1,5 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
+import type { DocSession } from '../board/editor';
+
 import { api, type Board } from '../api';
 import { navigate } from '../router';
 import { TagEditor } from './TagEditor';
@@ -13,9 +15,19 @@ interface Props {
   whoami: ReactNode;
 }
 
-/** BoardPage is one board: a slim header (title, tags) over the editor. */
+type View = 'edgeless' | 'page';
+
+function viewFromURL(): View | undefined {
+  const v = new URLSearchParams(location.search).get('view');
+  return v === 'page' || v === 'edgeless' ? v : undefined;
+}
+
+/** BoardPage is one document — a board or a page: a slim header (title,
+ *  tags, the Board/Page switch) over the editor. */
 export function BoardPage({ id, userName, canWrite, whoami }: Props) {
   const [board, setBoard] = useState<Board | null>(null);
+  const [view, setView] = useState<View | undefined>(viewFromURL);
+  const session = useRef<DocSession | null>(null);
   const [known, setKnown] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
@@ -27,7 +39,8 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
       .then(b => {
         setBoard(b);
         setTitle(b.title);
-        document.title = `${b.title} · aeboard`;
+        setView(v => v ?? b.mode);
+        document.title = `${b.title || untitled(b.mode)} · aeboard`;
       })
       .catch(e => setError(String(e.message ?? e)));
     api
@@ -42,26 +55,53 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
   // The editor bundle is large; load it only when a board is opened.
   useEffect(() => {
     if (!board || !mount.current) return;
-    let session: { destroy(): void } | null = null;
     let cancelled = false;
+    let unsub: (() => void) | null = null;
     const el = mount.current;
     import('../board/editor')
-      .then(({ openBoard }) => openBoard(id, { name: userName }, el, { readonly: !canWrite }))
+      .then(({ openDoc }) =>
+        openDoc(id, { name: userName }, el, {
+          readonly: !canWrite,
+          mode: view ?? board.mode,
+          onNavigate: target => navigate(`/b/${target}`),
+        }),
+      )
       .then(s => {
-        if (cancelled) s.destroy();
-        else {
-          session = s;
-          (window as unknown as { aeboard: unknown }).aeboard = s;
+        if (cancelled) {
+          s.destroy();
+          return;
         }
+        session.current = s;
+        (window as unknown as { aeboard: unknown }).aeboard = s;
+        // The title lives in the document: follow it when it is typed in the
+        // page's title line, or by someone else.
+        const sub = s.workspace.slots.docListUpdated.subscribe(() => {
+          const t = s.workspace.meta.getDocMeta(id)?.title ?? '';
+          setTitle(t);
+          setBoard(b => (b ? { ...b, title: t } : b));
+          document.title = `${t || untitled(board.mode)} · aeboard`;
+        });
+        unsub = () => sub.unsubscribe();
       })
       .catch(e => setError(String(e.message ?? e)));
     return () => {
       cancelled = true;
-      session?.destroy();
+      unsub?.();
+      session.current?.destroy();
+      session.current = null;
     };
     // Reconnect only when the board changes; a rename must not remount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [board?.id, userName, canWrite]);
+
+  const switchView = (v: View) => {
+    setView(v);
+    session.current?.setMode(v);
+    const url = new URL(location.href);
+    if (v === board?.mode) url.searchParams.delete('view');
+    else url.searchParams.set('view', v);
+    history.replaceState(null, '', url);
+  };
 
   const save = async (patch: { title?: string; tags?: string[] }) => {
     try {
@@ -96,11 +136,11 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
             navigate('/');
           }}
         >
-          ← Boards
+          ← All
         </a>
         {board && !canWrite && (
           <>
-            <h1 className="title-input title-static">{board.title}</h1>
+            <h1 className="title-input title-static">{board.title || untitled(board.mode)}</h1>
             <TagEditor tags={board.tags} readOnly onChange={() => {}} />
           </>
         )}
@@ -109,7 +149,8 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
             <input
               className="title-input"
               value={title}
-              aria-label="Board title"
+              aria-label="Title"
+              placeholder={untitled(board.mode)}
               onChange={e => setTitle(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
@@ -118,16 +159,36 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
                   (e.target as HTMLInputElement).blur();
                 }
               }}
-              onBlur={() => title.trim() && title !== board.title && save({ title })}
+              onBlur={() => title !== board.title && save({ title })}
             />
             <TagEditor tags={board.tags} known={known} onChange={tags => save({ tags })} />
           </>
         )}
         {error && board && <span className="error">{error}</span>}
         <span className="spacer" />
+        {board && (
+          <div className="segmented" role="tablist" aria-label="View">
+            {(['edgeless', 'page'] as const).map(v => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={(view ?? board.mode) === v}
+                className={`segment${(view ?? board.mode) === v ? ' segment-active' : ''}`}
+                onClick={() => switchView(v)}
+              >
+                {v === 'edgeless' ? 'Board' : 'Page'}
+              </button>
+            ))}
+          </div>
+        )}
         {whoami}
       </header>
       <div className="editor-mount" ref={mount} />
     </div>
   );
+}
+
+export function untitled(mode: 'edgeless' | 'page'): string {
+  return mode === 'page' ? 'Untitled page' : 'Untitled board';
 }

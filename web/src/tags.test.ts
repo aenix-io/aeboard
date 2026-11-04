@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { clickTag, filterBoards, isSelected, parseTags } from './tags';
+import { clickTag, filterBoards, filterKind, isSelected, parseTags } from './tags';
 
 describe('clickTag', () => {
   it('plain click selects only the clicked tag', () => {
@@ -49,5 +49,17 @@ describe('isSelected / parseTags', () => {
   });
   it('parseTags trims, drops empties and case-insensitive duplicates', () => {
     expect(parseTags(' q4, Team ,,team, ')).toEqual(['q4', 'Team']);
+  });
+});
+
+describe('filterKind', () => {
+  const docs = [
+    { id: 'b', mode: 'edgeless' as const },
+    { id: 'p', mode: 'page' as const },
+  ];
+  it('all keeps both kinds; each kind keeps only its own', () => {
+    expect(filterKind(docs, 'all').map(d => d.id)).toEqual(['b', 'p']);
+    expect(filterKind(docs, 'edgeless').map(d => d.id)).toEqual(['b']);
+    expect(filterKind(docs, 'page').map(d => d.id)).toEqual(['p']);
   });
 });

@@ -35,6 +35,16 @@ The last published npm release of `@blocksuite/affine` is 0.22.4 (July 2025). On
 
 ygo is pinned (`v1.55.0`) and touched in one place (`internal/server`): the websocket server, its persistence interface, `Authorize`, `GetDoc`/`BroadcastUpdate` for injecting fetched changes, `OnUnloadDocument`. The CRDT functions are used for merging states. If the project stalls, this surface is small enough to replace.
 
+## Documents: boards and pages
+
+A board and a page are the same thing — a BlockSuite document — with a different primary view: `edgeless` (the canvas) or `page` (text top to bottom). The catalog entry (`board.json`) records it as `mode`; every document can be opened in either view (the Board/Page switch, `?view=` in the URL). New documents start from their mode's seed (`internal/seed`): a page's seed also holds one note with an empty paragraph.
+
+The SPA keeps one `DocsWorkspace` (`web/src/board/workspace.ts`) for the whole session. Its document list comes from the server's catalog. Each document is its own Y.Doc with its own sync room and presence, joined only when the document is loaded: the one on screen, and any one a page links to or embeds (BlockSuite loads those itself). That is what the `@` link menu, references, linked cards and synced (inline) embeds run on.
+
+The title lives in the document, as its root block's title text — the page's title line edits it directly. The server copies it into the catalog on every update. A rename through the API rewrites the text and sends the update to the open room. Boards stored before titles lived in documents get their catalog title written in once, on load.
+
+A page created from the `@` menu is built by BlockSuite in the creating browser (`createDefaultDoc` adds the root blocks itself). So it is created on the server as *blank*: with a client-chosen id and no seed, otherwise it would end up with two roots. Nobody else can be opening a brand-new id, so the seed's race does not apply.
+
 ## Storage
 
 Each board is a directory, identical in the plain-file and the git backend:

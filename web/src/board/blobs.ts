@@ -8,10 +8,14 @@ export class ServerBlobSource implements BlobSource {
   // Keys are content hashes, so a cached blob can never go stale.
   private readonly cache = new Map<string, Blob>();
 
-  constructor(private readonly boardId: string) {}
+  /** board is the document whose route the attachments go through (a
+   *  function: the workspace serves every document, so it is whichever one
+   *  is open now). */
+  constructor(private readonly board: string | (() => string)) {}
 
   private url(key: string) {
-    return `/api/v1/boards/${encodeURIComponent(this.boardId)}/blobs/${encodeURIComponent(key)}`;
+    const id = typeof this.board === 'function' ? this.board() : this.board;
+    return `/api/v1/boards/${encodeURIComponent(id)}/blobs/${encodeURIComponent(key)}`;
   }
 
   async get(key: string): Promise<Blob | null> {

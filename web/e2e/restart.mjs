@@ -21,7 +21,7 @@ const stats = page => page.evaluate(() => {
   const surface = store.getBlocksByFlavour('affine:surface')[0]?.model;
   const flavours = {};
   for (const b of store.getAllModels()) flavours[b.flavour] = (flavours[b.flavour] ?? 0) + 1;
-  return { flavours, elements: surface ? surface.elementModels.length : -1, status: window.aeboard.provider.wsconnected };
+  return { flavours, elements: surface ? surface.elementModels.length : -1, status: window.aeboard.doc.provider?.wsconnected };
 });
 const draw = async (page, x, y) => {
   await page.mouse.click(x - 100, y - 100);

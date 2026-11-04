@@ -1,10 +1,11 @@
 # aeboard
 
-A collaborative whiteboard in one Go binary. The board editor is [BlockSuite](https://github.com/toeverything/AFFiNE/tree/canary/blocksuite) in edgeless mode (the MIT `@blocksuite/*` packages), boards sync live between browsers over Yjs through an embedded [ygo](https://github.com/reearth/ygo) server, and every board is stored in a git repository — the same approach as [aeman](https://github.com/aenix-io/aeman).
+A collaborative whiteboard and pages in one Go binary. The board editor is [BlockSuite](https://github.com/toeverything/AFFiNE/tree/canary/blocksuite) in edgeless mode (the MIT `@blocksuite/*` packages), boards sync live between browsers over Yjs through an embedded [ygo](https://github.com/reearth/ygo) server, and every board is stored in a git repository — the same approach as [aeman](https://github.com/aenix-io/aeman).
 
 - Shapes, connectors, text, pen, mind maps, frames, AFFiNE's board templates and stickers.
 - Live collaboration: edits, cursors and selections of everyone on the board.
-- A board list with tags (click a tag to filter, Shift-click to add more).
+- Pages next to boards: rich text documents, linked with `@`, embedded in each other (as a card or inline), every document viewable as a board or as a page.
+- One list of boards and pages with tags (click a tag to filter, Shift-click to add more) and an All / Boards / Pages switch.
 - Boards in git: each board is its Yjs state plus a readable JSON dump, committed and pushed in the background; diverged replicas merge without conflicts.
 
 ## Run locally
