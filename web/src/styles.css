@@ -278,3 +278,5 @@ a.sb-foot-button { text-decoration: none; }
 /* The title follows the path as its last step, not as a separate item. */
 .app .doc-crumbs + .title-input { margin-left: -12px; padding-left: 3px; }
 .doc-crumbs + .title-static { margin-left: -12px; padding-left: 4px; }
+/* "Go to original" follows the title a space away. */
+.app .title-input + .to-original, .title-static + .to-original { margin-left: -16px; }
