@@ -60,8 +60,13 @@ func New(store *boards.Store, blobStore *blobs.Store, spa fs.FS, log *slog.Logge
 		if !boards.ValidID(id) {
 			return websocket.ConnectionConfig{}, false
 		}
-		if _, err := store.Get(id); err != nil {
+		m, err := store.Get(id)
+		if err != nil {
 			return websocket.ConnectionConfig{}, false
+		}
+		// A document in the trash is read-only until it is restored.
+		if !m.Trashed.IsZero() {
+			return websocket.ConnectionConfig{ReadOnly: true}, true
 		}
 		// The hosted gate has already refused a visitor without access; one
 		// who may only read gets a socket whose writes ygo drops, and is
@@ -411,6 +416,9 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, boards.ErrInlineLink):
 		writeError(w, http.StatusConflict, "it is mentioned in the text there: remove the mention to take it out")
+		return
+	case errors.Is(err, boards.ErrTrashed):
+		writeError(w, http.StatusConflict, err.Error()+": restore it to change it")
 		return
 	case errors.Is(err, boards.ErrNotTrashed):
 		writeError(w, http.StatusConflict, err.Error())

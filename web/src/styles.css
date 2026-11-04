@@ -320,7 +320,9 @@ a.sb-foot-button { text-decoration: none; }
 /* A little slack: a field may draw its text a pixel or two wider than the
    copy (it differs by browser), and its last letter must not be cut. */
 .app .title-wrap > .title-sizer { padding-right: 13px; }
-.app .title-input { position: absolute; inset: 0; width: 100%; min-width: 0; border-color: transparent; }
+.app input.title-input { position: absolute; inset: 0; width: 100%; min-width: 0; border-color: transparent; }
+/* A read-only title (no access, or in the trash) is plain text, sized as the field. */
+.app h1.title-static { position: static; font-size: 15px; font-weight: 600; border: none; }
 .app .title-input:hover { border-color: var(--line); }
 /* The title follows the path as its last step, not as a separate item. */
 .doc-crumbs + .title-wrap { margin-left: -10px; }

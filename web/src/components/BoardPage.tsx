@@ -164,6 +164,8 @@ export function BoardPage({ id, userName, canWrite, lead, whoami, status }: Prop
   useEffect(() => noteOpened(id), [id]);
   // In the trash: AFFiNE keeps such a document readable, with a way back.
   const trashed = cat.trash.some(d => d.id === id);
+  // A document in the trash is read-only until it is restored.
+  const editable = canWrite && !trashed;
 
   useEffect(() => {
     api
@@ -189,7 +191,7 @@ export function BoardPage({ id, userName, canWrite, lead, whoami, status }: Prop
     import('../board/editor')
       .then(({ openDoc }) =>
         openDoc(id, { name: userName }, el, {
-          readonly: !canWrite,
+          readonly: !editable,
           mode: view ?? board.mode,
           onNavigate: target => navigate(`/b/${target}`),
         }),
@@ -221,15 +223,18 @@ export function BoardPage({ id, userName, canWrite, lead, whoami, status }: Prop
     };
     // Reconnect only when the board changes; a rename must not remount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [board?.id, userName, canWrite]);
+  }, [board?.id, userName, editable]);
 
   // The editor's own document list follows the app's (fresh from the status
   // stream): a document deleted meanwhile drops its room in the editor, so
-  // no socket keeps retrying it (that holds up every other socket).
+  // no socket keeps retrying it (that holds up every other socket), and one
+  // moved to the trash shows as deleted where it is linked (this one stays
+  // known while it is open, even from the trash).
   useEffect(() => {
     if (!cat.docs) return;
-    session.current?.workspace.setCatalog([...cat.docs, ...cat.trash]);
-  }, [cat.docs, cat.trash]);
+    const open = [...cat.docs, ...cat.trash].filter(d => !d.trashed || d.id === id);
+    session.current?.workspace.setCatalog(open);
+  }, [cat.docs, cat.trash, id]);
 
   const switchView = (v: View) => {
     setView(v);
@@ -267,12 +272,12 @@ export function BoardPage({ id, userName, canWrite, lead, whoami, status }: Prop
       <header className="board-head">
         {lead}
         {board && <DocPath id={id} />}
-        {board && !canWrite && (
+        {board && !editable && (
           <>
             <h1 className="title-input title-static">{board.title || untitled(board.mode)}</h1>
           </>
         )}
-        {board && canWrite && (
+        {board && editable && (
           <span className="title-wrap">
             {/* The hidden copy of the text sizes the field to it. */}
             <span className="title-sizer" aria-hidden="true">
