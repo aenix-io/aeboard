@@ -6,7 +6,22 @@ import { atFolderLevel, type Crumb, type Entry, entriesOf, homePath, inside, isI
 import { navigate, type Route } from '../router';
 import { type Container, type Drop, levelAt, resolveDrop, type RowCtx, type Zone } from '../tree';
 import { untitled } from './BoardPage';
-import { BoardIcon, DocsIcon, FolderIcon, McpIcon, PageIcon, SearchIcon, ShortcutBadge, StarIcon, TrashIcon } from './icons';
+import {
+  BoardIcon,
+  Chevron,
+  DocsIcon,
+  FolderIcon,
+  LinkedBoardShortcutIcon,
+  LinkedPageShortcutIcon,
+  McpIcon,
+  MoreIcon,
+  PageIcon,
+  PlusIcon,
+  SearchIcon,
+  SidebarIcon,
+  StarIcon,
+  TrashIcon,
+} from './icons';
 import { openSearch, toggleFavorite, useFavorites } from '../prefs';
 import { Confirm } from './Confirm';
 import { McpDialog } from './McpDialog';
@@ -342,9 +357,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
       aria-expanded={open}
       onClick={onClick}
     >
-      <svg className={`sb-chevron${open ? ' sb-chevron-open' : ''}`} width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      <Chevron open={open} />
     </button>
   );
 
@@ -378,7 +391,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           {caret(open, f.name, () => toggle(at.node))}
           <button type="button" className="sb-label sb-folder-label" aria-expanded={open} onClick={() => toggle(at.node)}>
             <span className="kind kind-folder">
-              <FolderIcon />
+              <FolderIcon open={open} />
             </span>
             <span className="sb-name">{f.name}</span>
           </button>
@@ -386,7 +399,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
             <span className="sb-actions">
               <RowMenu
                 label="Add to folder"
-                glyph="+"
+                glyph={<PlusIcon />}
                 items={[
                   ['New page', () => void createDoc('page', f.id)],
                   ['New board', () => void createDoc('edgeless', f.id)],
@@ -401,7 +414,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
               />
               <RowMenu
                 label="Folder actions"
-                glyph="⋯"
+                glyph={<MoreIcon />}
                 items={[
                   ['Rename', () => setRenaming(f.id)],
                   ['Delete', () => void cat.deleteFolder(f.id).catch(() => {})],
@@ -491,8 +504,13 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
             }}
           >
             <span className={`kind kind-${d.mode}`}>
-              {d.mode === 'page' ? <PageIcon /> : <BoardIcon />}
-              {shortcut && <ShortcutBadge />}
+              {shortcut ? (
+                d.mode === 'page' ? <LinkedPageShortcutIcon /> : <LinkedBoardShortcutIcon />
+              ) : d.mode === 'page' ? (
+                <PageIcon />
+              ) : (
+                <BoardIcon />
+              )}
             </span>
             <span className={`sb-name${d.title ? '' : ' sb-untitled'}`}>{label}</span>
           </a>
@@ -501,7 +519,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
               {!shortcut && cat.canWrite && (
                 <RowMenu
                   label="Add inside"
-                  glyph="+"
+                  glyph={<PlusIcon />}
                   items={[
                     ['New page inside', () => void createChild('page', d.id, at.node)],
                     ['New board inside', () => void createChild('edgeless', d.id, at.node)],
@@ -510,7 +528,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
               )}
               <RowMenu
                 label={shortcut ? 'Shortcut actions' : 'Document actions'}
-                glyph="⋯"
+                glyph={<MoreIcon />}
                 items={cat.canWrite ? items : items.slice(0, 1)}
               />
             </span>
@@ -539,9 +557,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
     <div className="sb-section">
       <button type="button" className="sb-section-title" aria-expanded={!folded.has(name)} onClick={() => fold(name)}>
         {name}
-        <svg className={`sb-chevron${folded.has(name) ? '' : ' sb-chevron-open'}`} width="10" height="10" viewBox="0 0 24 24" aria-hidden="true">
-          <path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <Chevron open={!folded.has(name)} size={14} />
       </button>
       {extra}
     </div>
@@ -583,7 +599,7 @@ export function Sidebar({ route, hosted }: { route: Route; hosted: boolean }) {
           cat.canWrite && (
             <RowMenu
               label="Add"
-              glyph="+"
+              glyph={<PlusIcon />}
               items={[
                 ['New page', () => void createDoc('page', '')],
                 ['New board', () => void createDoc('edgeless', '')],
@@ -680,10 +696,7 @@ export function SidebarToggle({ open, onToggle }: { open: boolean; onToggle: () 
       aria-pressed={open}
       onClick={onToggle}
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="M9 4v16" />
-      </svg>
+      <SidebarIcon />
     </button>
   );
 }

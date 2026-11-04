@@ -7,7 +7,7 @@ import { api, type Board } from '../api';
 import { homePath, isInside } from '../library';
 import { navigate } from '../router';
 import { noteOpened, toggleFavorite, useFavorites } from '../prefs';
-import { StarIcon } from './icons';
+import { MoreIcon, StarIcon } from './icons';
 import { RowMenu } from './RowMenu';
 import { Confirm } from './Confirm';
 
@@ -142,7 +142,7 @@ function DocActions({
       >
         <StarIcon on={favorite} />
       </button>
-      {items.length > 0 && <RowMenu label="Document actions" glyph="⋯" items={items} />}
+      {items.length > 0 && <RowMenu label="Document actions" glyph={<MoreIcon />} items={items} />}
     </span>
   );
 }

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 /** RowMenu is a row's small hover button with a dropdown. The list is fixed
  *  to the window (the tree scrolls and would clip it) and closes on a click
  *  elsewhere, Escape or a choice — not when the pointer wanders off, which
  *  would close it on the way from the button to the list. */
-export function RowMenu({ label, glyph, items }: { label: string; glyph: string; items: Array<[string, () => void]> }) {
+export function RowMenu({ label, glyph, items }: { label: string; glyph: ReactNode; items: Array<[string, () => void]> }) {
   const [at, setAt] = useState<{ top: number; left: number } | null>(null);
   const root = useRef<HTMLSpanElement>(null);
   useEffect(() => {
