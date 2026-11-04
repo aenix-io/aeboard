@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/aenix-io/aenotes/internal/blobs"
 	"github.com/aenix-io/aenotes/internal/boards"
@@ -181,5 +182,31 @@ func TestFolderAPI(t *testing.T) {
 	_, body = do(t, "GET", ts.URL+"/api/v1/boards", "")
 	if !strings.Contains(body, `"folders":[{`) || !strings.Contains(body, "Work 2") {
 		t.Fatalf("list: %s", body)
+	}
+}
+
+// An open status stream must not hold up a graceful stop: Shutdown waits for
+// active requests, and the stream would otherwise run until its client left.
+func TestShutdownEndsStatusStreams(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := boards.Open(context.Background(), boards.DirBackend{Root: dir})
+	blobStore, _ := blobs.Open(dir)
+	srv := New(store, blobStore, fstest.MapFS{}, slog.New(slog.DiscardHandler))
+	hs := httptest.NewUnstartedServer(srv.Handler())
+	hs.Config.RegisterOnShutdown(srv.CloseStreams)
+	hs.Start()
+	resp, err := http.Get(hs.URL + "/api/v1/status/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	buf := make([]byte, 256)
+	if _, err := resp.Body.Read(buf); err != nil { // the first event
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := hs.Config.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown with an open stream: %v", err)
 	}
 }

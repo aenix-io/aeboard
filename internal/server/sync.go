@@ -109,6 +109,10 @@ func (s *Server) statusEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-s.streamsDone:
+			// The server is stopping: end the stream so http.Server.Shutdown
+			// does not wait on it (EventSource reconnects to the next one).
+			return
 		case <-ch:
 			time.Sleep(250 * time.Millisecond) // fold a burst into one event
 			if !send() {
@@ -121,6 +125,13 @@ func (s *Server) statusEvents(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+// CloseStreams ends every open status stream. Register it with
+// http.Server.RegisterOnShutdown: Shutdown waits for active requests, and a
+// stream only ends when its client goes.
+func (s *Server) CloseStreams() {
+	s.streamsOnce.Do(func() { close(s.streamsDone) })
 }
 
 // ApplyRemote brings boards changed elsewhere (fetched from git) into the
