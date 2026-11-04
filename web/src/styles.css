@@ -213,7 +213,11 @@ a.button.primary:hover { filter: brightness(0.95); }
 .sb-empty { color: var(--faint); padding: 4px 8px; font-size: 12px; }
 .app .sb-input { width: 100%; padding: 2px 6px; font-size: 13px; }
 .sb-error { padding: 6px 12px; font-size: 12px; }
-.sidebar-toggle { border: none; background: none; padding: 4px 6px; color: var(--muted); display: inline-flex; border-radius: 6px; }
+.sidebar-toggle { position: fixed; z-index: 45; top: 10px; left: 10px; border: none; background: none; padding: 5px 6px; color: var(--muted); display: inline-flex; border-radius: 6px; }
+/* Room for the button: before the logo in the sidebar, before the header's
+   first item on the page. */
+.sidebar .sb-head { padding-left: 46px; }
+.lead-space { flex: none; width: 26px; }
 .sidebar-toggle:hover, .sidebar-toggle[aria-pressed='true'] { background: var(--bg-soft); color: var(--fg); }
 @media (max-width: 640px) {
   .sidebar { position: fixed; z-index: 40; left: 0; top: 0; box-shadow: 4px 0 16px rgba(27, 31, 36, 0.16); }

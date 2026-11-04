@@ -76,7 +76,10 @@ function Boards({
     window.addEventListener('keydown', on);
     return () => window.removeEventListener('keydown', on);
   }, []);
-  const lead = <SidebarToggle open={sidebar} onToggle={toggleSidebar} />;
+  // The sidebar's button stays in one place, the top left corner: in the
+  // sidebar's head while it is open, over the page while it is not — where
+  // the page's header leaves room for it.
+  const lead = sidebar ? null : <span className="lead-space" aria-hidden="true" />;
   const userName = me?.login ?? name;
   const canWrite = !me || me.access === 'write';
   const whoami = (
@@ -97,6 +100,7 @@ function Boards({
   return (
     <CatalogProvider canWrite={canWrite} version={sync?.catalog}>
       <div className={`app shell${sidebar ? ' shell-sidebar' : ''}`}>
+        <SidebarToggle open={sidebar} onToggle={toggleSidebar} />
         {sidebar && <Sidebar route={route} hosted={!!me?.hosted} />}
         <main className="main">
           {route.name === 'board' ? (
