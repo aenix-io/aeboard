@@ -4,7 +4,7 @@ import type { DocSession } from '../board/editor';
 import { useCatalog } from '../catalog';
 
 import { api, type Board } from '../api';
-import { homePath } from '../library';
+import { homePath, isInside } from '../library';
 import { navigate } from '../router';
 import { noteOpened, toggleFavorite, useFavorites } from '../prefs';
 import { StarIcon } from './icons';
@@ -103,6 +103,23 @@ function DocActions({
   const mode = doc?.mode ?? fallbackMode;
   const other = mode === 'page' ? 'edgeless' : 'page';
   const items: Array<[string, () => void]> = [];
+  // Opened from a shortcut: the way to the original, and making the
+  // shortcut's place the document's own (not when the shortcut's document
+  // lives inside this one: it would go inside itself).
+  const trail = cat.trail?.doc === id && cat.trail.shortcut ? cat.trail : null;
+  const from = trail?.path.at(-1)?.kind === 'doc' ? trail.path.at(-1)!.id : '';
+  if (trail) items.push(['Go to original', () => cat.setTrail(null)]);
+  if (trail && canWrite && from && from !== id && !isInside(cat.docs ?? [], from, id)) {
+    items.push([
+      'Make this the original',
+      () =>
+        void cat
+          .makeOriginal(id, from)
+          // Now it lives where it was opened from: its own place is the path.
+          .then(() => cat.setTrail(null))
+          .catch(() => {}),
+    ]);
+  }
   if (canWrite && doc && !doc.trashed) {
     items.push([
       `Default to ${other === 'page' ? 'Page' : 'Board'} mode`,
