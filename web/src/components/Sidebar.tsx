@@ -34,7 +34,9 @@ export function Sidebar({ route }: { route: Route }) {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   // Where a drag would land on a row: before it, after it, or into it (a
   // folder's middle).
-  const [dropAt, setDropAt] = useState<{ id: string; pos: 'before' | 'after' | 'into' } | null>(null);
+  // "first" is the bottom edge of an open folder: the item goes in as its
+  // first entry, which is where the line under the folder's row points.
+  const [dropAt, setDropAt] = useState<{ id: string; pos: DropPos } | null>(null);
   // The folder an inline "new folder" field is open in, or null.
   const [newFolderIn, setNewFolderIn] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -137,7 +139,7 @@ export function Sidebar({ route }: { route: Route }) {
 
   // rowDrop makes a row take drops: on its top or bottom edge the dragged
   // item goes before or after it (in the row's folder), on a folder's middle
-  // into that folder.
+  // into that folder, on an open folder's bottom edge in as its first entry.
   const rowDrop = (entry: { kind: 'folder' | 'doc'; id: string }, parent: string) => ({
     onDragOver: (e: DragEvent<HTMLDivElement>) => {
       if (!cat.canWrite || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
@@ -146,7 +148,9 @@ export function Sidebar({ route }: { route: Route }) {
       e.dataTransfer.dropEffect = 'move';
       const r = e.currentTarget.getBoundingClientRect();
       const y = (e.clientY - r.top) / r.height;
-      const pos = entry.kind === 'folder' ? (y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into') : y < 0.5 ? 'before' : 'after';
+      let pos: DropPos =
+        entry.kind === 'folder' ? (y < 0.25 ? 'before' : y > 0.75 ? 'after' : 'into') : y < 0.5 ? 'before' : 'after';
+      if (pos === 'after' && entry.kind === 'folder' && expanded.has(entry.id)) pos = 'first';
       setDropAt(d => (d?.id === entry.id && d.pos === pos ? d : { id: entry.id, pos }));
     },
     onDragLeave: (e: DragEvent<HTMLDivElement>) => {
@@ -167,6 +171,11 @@ export function Sidebar({ route }: { route: Route }) {
         }
         return;
       }
+      if (at.pos === 'first') {
+        if (item.kind === 'folder' && (entry.id === item.id || pathOf(cat.folders, entry.id).some(f => f.id === item.id))) return;
+        void cat.place(item, entry.id, 0).catch(() => {});
+        return;
+      }
       // A folder may not go below itself.
       if (item.kind === 'folder' && (parent === item.id || pathOf(cat.folders, parent).some(f => f.id === item.id))) return;
       const siblings = entriesOf(cat.folders, docs, parent).filter(
@@ -177,6 +186,21 @@ export function Sidebar({ route }: { route: Route }) {
     },
     'data-drop-pos': dropAt?.id === entry.id ? dropAt.pos : undefined,
   });
+
+  // dropLine is the line showing where a drop lands, indented to the level
+  // the item will be at: the row's own for before/after, one deeper for an
+  // open folder's first entry.
+  const dropLine = (id: string, depth: number) => {
+    if (dropAt?.id !== id || dropAt.pos === 'into') return null;
+    const level = dropAt.pos === 'first' ? depth + 1 : depth;
+    return (
+      <span
+        className={`sb-drop-line sb-drop-${dropAt.pos === 'before' ? 'top' : 'bottom'}`}
+        style={{ left: indent(level) + 20 }}
+        aria-hidden="true"
+      />
+    );
+  };
 
   const folderRow = (f: Folder, depth: number, parent: string) => {
     const open = expanded.has(f.id);
@@ -203,6 +227,7 @@ export function Sidebar({ route }: { route: Route }) {
           {...drag({ kind: 'folder', id: f.id })}
           {...rowDrop({ kind: 'folder', id: f.id }, parent)}
         >
+          {dropLine(f.id, depth)}
           <button
             type="button"
             className="sb-caret"
@@ -259,6 +284,7 @@ export function Sidebar({ route }: { route: Route }) {
       {...drag({ kind: 'doc', id: d.id })}
       {...rowDrop({ kind: 'doc', id: d.id }, parent)}
     >
+      {dropLine(d.id, depth)}
       <span className="sb-caret sb-caret-none" />
       <a className="sb-label" href={`/b/${d.id}`} onClick={go(`/b/${d.id}`)}>
         <span className={`kind kind-${d.mode}`}>{d.mode === 'page' ? <PageIcon /> : <BoardIcon />}</span>
@@ -296,6 +322,8 @@ export function Sidebar({ route }: { route: Route }) {
 }
 
 const indent = (depth: number) => 8 + depth * 14;
+
+type DropPos = 'before' | 'after' | 'into' | 'first';
 
 /** RowMenu is a row's small hover button with a dropdown. The list is fixed
  *  to the window (the tree scrolls and would clip it) and closes on a click

@@ -218,7 +218,10 @@ a.button.primary:hover { filter: brightness(0.95); }
   .sidebar { position: fixed; z-index: 40; left: 0; top: 0; box-shadow: 4px 0 16px rgba(27, 31, 36, 0.16); }
 }
 
-/* sidebar drop positions: a line before/after a row, a highlight into a folder */
-.sb-row[data-drop-pos='before'] { box-shadow: inset 0 2px 0 var(--accent); }
-.sb-row[data-drop-pos='after'] { box-shadow: inset 0 -2px 0 var(--accent); }
+/* sidebar drop positions: a line before/after a row, indented to the level
+   the item lands at, and a highlight for "into a folder" */
+.sb-drop-line { position: absolute; right: 4px; height: 2px; background: var(--accent); border-radius: 1px; pointer-events: none; }
+.sb-drop-line::before { content: ''; position: absolute; left: -4px; top: -2px; width: 6px; height: 6px; border-radius: 50%; border: 2px solid var(--accent); background: var(--bg); box-sizing: border-box; }
+.sb-drop-top { top: -1px; }
+.sb-drop-bottom { bottom: -1px; }
 .sb-row[data-drop-pos='into'] { background: rgba(9, 105, 218, 0.12); }
