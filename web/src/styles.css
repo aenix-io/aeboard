@@ -318,6 +318,9 @@ a.sb-foot-button { text-decoration: none; }
 /* Only the hidden copy is in the flow: a field has a width of its own
    (about 20 characters) that would widen the box otherwise. */
 .title-sizer { display: block; visibility: hidden; overflow: hidden; text-overflow: clip; }
+/* A little slack: a field may draw its text a pixel or two wider than the
+   copy (it differs by browser), and its last letter must not be cut. */
+.app .title-wrap > .title-sizer { padding-right: 13px; }
 .app .title-input { position: absolute; inset: 0; width: 100%; min-width: 0; border-color: transparent; }
 .app .title-input:hover { border-color: var(--line); }
 /* The title follows the path as its last step, not as a separate item. */
