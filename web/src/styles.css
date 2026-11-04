@@ -19,6 +19,8 @@
 }
 
 html, body, #app, .app { margin: 0; height: 100%; }
+.shell { display: flex; }
+.main { flex: 1; min-width: 0; height: 100%; overflow: auto; }
 
 button, input { font: inherit; color: inherit; }
 button {
@@ -183,3 +185,35 @@ a.button.primary:hover { filter: brightness(0.95); }
 .move-list { list-style: none; margin: 0; padding: 0; overflow: auto; }
 .move-list button { width: 100%; text-align: left; border: none; display: flex; align-items: center; gap: 6px; padding-top: 6px; padding-bottom: 6px; }
 .move-list button:disabled { color: var(--faint); cursor: default; background: none; }
+
+/* sidebar (Notion-style tree), hidden unless toggled from the header */
+.sidebar { flex: none; width: 260px; height: 100%; display: flex; flex-direction: column; background: #fbfbfa;
+  border-right: 1px solid var(--line-soft); font-size: 13px; user-select: none; }
+.sb-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 10px 8px 14px; }
+.sb-home { font-weight: 700; color: var(--fg); text-decoration: none; padding: 2px 4px; border-radius: 4px; }
+.sb-tree { flex: 1; overflow: auto; padding: 0 4px 8px; display: flex; flex-direction: column; }
+.sb-rest { flex: 1; min-height: 40px; border-radius: 4px; }
+.sb-row { display: flex; align-items: center; gap: 2px; min-height: 28px; border-radius: 5px; padding-right: 4px; position: relative; }
+.sb-row:hover { background: rgba(55, 53, 47, 0.06); }
+.sb-active, .sb-active:hover { background: rgba(55, 53, 47, 0.1); font-weight: 600; }
+.sb-row[draggable='true'] { cursor: grab; }
+.sb-caret { flex: none; width: 20px; height: 20px; border: none; background: none; padding: 0; color: var(--faint); font-size: 11px; border-radius: 4px; }
+.sb-caret:hover { background: rgba(55, 53, 47, 0.08); }
+.sb-caret-none { display: inline-block; }
+.sb-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--fg); text-decoration: none; padding: 3px 2px; }
+.sb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-untitled { color: var(--muted); }
+.sb-actions { display: none; gap: 2px; }
+.sb-row:hover .sb-actions, .sb-actions:has([aria-expanded='true']) { display: flex; }
+.sb-icon-button { width: 22px; height: 22px; padding: 0; border: none; background: none; color: var(--muted); font-size: 15px; line-height: 1; border-radius: 4px; }
+.sb-icon-button:hover { background: rgba(55, 53, 47, 0.1); color: var(--fg); }
+.sb-menu { position: relative; }
+.sb-menu-list { top: 24px; right: 0; }
+.sb-empty { color: var(--faint); padding: 4px 8px; font-size: 12px; }
+.app .sb-input { width: 100%; padding: 2px 6px; font-size: 13px; }
+.sb-error { padding: 6px 12px; font-size: 12px; }
+.sidebar-toggle { border: none; background: none; padding: 4px 6px; color: var(--muted); display: inline-flex; border-radius: 6px; }
+.sidebar-toggle:hover, .sidebar-toggle[aria-pressed='true'] { background: var(--bg-soft); color: var(--fg); }
+@media (max-width: 640px) {
+  .sidebar { position: fixed; z-index: 40; left: 0; top: 0; box-shadow: 4px 0 16px rgba(27, 31, 36, 0.16); }
+}

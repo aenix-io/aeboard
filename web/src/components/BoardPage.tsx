@@ -1,8 +1,9 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 import type { DocSession } from '../board/editor';
+import { useCatalog } from '../catalog';
 
-import { api, type Board, type Folder } from '../api';
+import { api, type Board } from '../api';
 import { pathOf } from '../library';
 import { folderPath, navigate } from '../router';
 
@@ -12,6 +13,8 @@ interface Props {
   /** False for a visitor with read access: the title and the board itself
    *  are shown, not edited (the server drops their writes anyway). */
   canWrite: boolean;
+  /** The sidebar toggle, first in the header. */
+  lead?: ReactNode;
   whoami: ReactNode;
 }
 
@@ -24,14 +27,17 @@ function viewFromURL(): View | undefined {
 
 /** BoardPage is one document — a board or a page: a slim header (title,
  *  its folder, the Board/Page switch) over the editor. */
-export function BoardPage({ id, userName, canWrite, whoami }: Props) {
+export function BoardPage({ id, userName, canWrite, lead, whoami }: Props) {
+  const cat = useCatalog();
   const [board, setBoard] = useState<Board | null>(null);
   const [view, setView] = useState<View | undefined>(viewFromURL);
   const session = useRef<DocSession | null>(null);
-  const [folders, setFolders] = useState<Folder[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const mount = useRef<HTMLDivElement>(null);
+  const folders = cat.folders;
+  // Where the document is now: a move in the sidebar shows here at once.
+  const docFolder = cat.docs?.find(d => d.id === id)?.folder ?? board?.folder ?? '';
 
   useEffect(() => {
     api
@@ -43,10 +49,6 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
         document.title = `${b.title || untitled(b.mode)} · aenotes`;
       })
       .catch(e => setError(String(e.message ?? e)));
-    api
-      .listBoards()
-      .then(l => setFolders(l.folders ?? []))
-      .catch(() => {});
     return () => {
       document.title = 'aenotes';
     };
@@ -79,6 +81,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
           const t = s.workspace.meta.getDocMeta(id)?.title ?? '';
           setTitle(t);
           setBoard(b => (b ? { ...b, title: t } : b));
+          cat.patchDoc(id, { title: t }); // the sidebar and the list follow
           document.title = `${t || untitled(board.mode)} · aenotes`;
         });
         unsub = () => sub.unsubscribe();
@@ -128,12 +131,13 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
   return (
     <div className="board-page">
       <header className="board-head">
+        {lead}
         <a
-          href={folderPath(board?.folder ?? '')}
+          href={folderPath(docFolder)}
           className="back"
           onClick={e => {
             e.preventDefault();
-            navigate(folderPath(board?.folder ?? ''));
+            navigate(folderPath(docFolder));
           }}
         >
           ←
@@ -150,7 +154,7 @@ export function BoardPage({ id, userName, canWrite, whoami }: Props) {
             All
           </a>
           {board &&
-            pathOf(folders, board.folder).map(f => (
+            pathOf(folders, docFolder).map(f => (
               <span key={f.id} className="crumb-sep-wrap">
                 <span className="crumb-sep">/</span>
                 <a

@@ -5,8 +5,10 @@ import { api, type Me, SIGNED_OUT, type WhoResult } from './api';
 import { BoardList } from './components/BoardList';
 import { BoardPage } from './components/BoardPage';
 import { NoAccess, SignIn } from './components/SignIn';
+import { Sidebar, SidebarToggle, useSidebar } from './components/Sidebar';
 import { SyncBadge } from './components/SyncBadge';
 import { WhoAmI } from './components/WhoAmI';
+import { CatalogProvider } from './catalog';
 import { type Route, useRoute } from './router';
 import { useSyncStatus } from './sync';
 import { loadName, saveName } from './user';
@@ -55,6 +57,8 @@ function Boards({
 }) {
   // The status stream is behind the sign-in, so it only starts here.
   const sync = useSyncStatus();
+  const [sidebar, toggleSidebar] = useSidebar();
+  const lead = <SidebarToggle open={sidebar} onToggle={toggleSidebar} />;
   const userName = me?.login ?? name;
   const canWrite = !me || me.access === 'write';
   const whoami = (
@@ -73,12 +77,24 @@ function Boards({
     </>
   );
   return (
-    <div className="app">
-      {route.name === 'board' ? (
-        <BoardPage key={route.id} id={route.id} userName={userName} canWrite={canWrite} whoami={whoami} />
-      ) : (
-        <BoardList key={route.folder} folder={route.folder} canWrite={canWrite} whoami={whoami} />
-      )}
-    </div>
+    <CatalogProvider canWrite={canWrite}>
+      <div className={`app shell${sidebar ? ' shell-sidebar' : ''}`}>
+        {sidebar && <Sidebar route={route} />}
+        <main className="main">
+          {route.name === 'board' ? (
+            <BoardPage
+              key={route.id}
+              id={route.id}
+              userName={userName}
+              canWrite={canWrite}
+              lead={lead}
+              whoami={whoami}
+            />
+          ) : (
+            <BoardList key={route.folder} folder={route.folder} lead={lead} whoami={whoami} />
+          )}
+        </main>
+      </div>
+    </CatalogProvider>
   );
 }
