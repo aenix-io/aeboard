@@ -49,6 +49,7 @@ func newReplica(t *testing.T, remote gitstore.Remote, dir string) *replica {
 	if err != nil {
 		t.Fatal(err)
 	}
+	r.backend.OnRemoteFolders = func(fs []boards.Folder) { r.store.MergeRemoteFolders(fs) }
 	r.backend.OnRemote = func(_ context.Context, remotes []boards.Remote) {
 		g, err := r.store.MergeRemote(remotes)
 		if err != nil {
@@ -112,7 +113,7 @@ func TestBoardsReachTheOtherReplica(t *testing.T) {
 	a := newReplica(t, remote, t.TempDir())
 	b := newReplica(t, remote, t.TempDir())
 
-	m, _ := a.store.Create(boards.CreateInput{Title: "Roadmap", Tags: []string{"q4"}}, "alice")
+	m, _ := a.store.Create(boards.CreateInput{Title: "Roadmap"}, "alice")
 	a.edit(t, m.ID, 11, "from-a")
 	a.flushAndSync(t)
 	if st := a.backend.Status(); st.Unpushed != 0 {
@@ -135,7 +136,7 @@ func TestBoardsReachTheOtherReplica(t *testing.T) {
 func TestConcurrentEditsOfOneBoardMerge(t *testing.T) {
 	remote := newRemote(t)
 	a := newReplica(t, remote, t.TempDir())
-	m, _ := a.store.Create(boards.CreateInput{Title: "Shared", Tags: nil}, "alice")
+	m, _ := a.store.Create(boards.CreateInput{Title: "Shared"}, "alice")
 	a.flushAndSync(t)
 	b := newReplica(t, remote, t.TempDir())
 	b.backend.SyncOnce(context.Background())
@@ -164,8 +165,8 @@ func TestConcurrentEditsOfDifferentBoards(t *testing.T) {
 	remote := newRemote(t)
 	a := newReplica(t, remote, t.TempDir())
 	b := newReplica(t, remote, t.TempDir())
-	ma, _ := a.store.Create(boards.CreateInput{Title: "A's", Tags: nil}, "")
-	mb, _ := b.store.Create(boards.CreateInput{Title: "B's", Tags: nil}, "")
+	ma, _ := a.store.Create(boards.CreateInput{Title: "A's"}, "")
+	mb, _ := b.store.Create(boards.CreateInput{Title: "B's"}, "")
 	a.flushAndSync(t)
 	b.flushAndSync(t)
 	a.backend.SyncOnce(context.Background())
@@ -182,7 +183,7 @@ func TestUnpushedCommitsSurviveRestart(t *testing.T) {
 	remote := newRemote(t)
 	dir := t.TempDir()
 	a := newReplica(t, remote, dir)
-	m, _ := a.store.Create(boards.CreateInput{Title: "Offline", Tags: nil}, "")
+	m, _ := a.store.Create(boards.CreateInput{Title: "Offline"}, "")
 	if err := a.store.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestUnpushedCommitsSurviveRestart(t *testing.T) {
 func TestCommitsAreAttributed(t *testing.T) {
 	remote := newRemote(t)
 	a := newReplica(t, remote, t.TempDir())
-	m, _ := a.store.Create(boards.CreateInput{Title: "b", Tags: nil}, "alice")
+	m, _ := a.store.Create(boards.CreateInput{Title: "b"}, "alice")
 	a.edit(t, m.ID, 3, "x") // by user-x
 	_ = a.store.Flush(context.Background())
 	c, err := a.backend.repo.CommitObject(a.backend.repo.Head())
@@ -238,4 +239,38 @@ func splitLines(s string) []string {
 		}
 	}
 	return append(out, s[start:])
+}
+
+// Folder trees changed on both replicas merge folder by folder (the later
+// change wins), through the same fetch-merge-push as boards. B is a depth-1
+// clone of a two-commit history here, so its merge commit's push also
+// exercises gitstore's unshallow-and-retry.
+func TestFolderTreesMerge(t *testing.T) {
+	remote := newRemote(t)
+	a := newReplica(t, remote, t.TempDir())
+	work, _ := a.store.CreateFolder("Work", "")
+	m, _ := a.store.Create(boards.CreateInput{Title: "In work", Folder: work.ID}, "")
+	a.flushAndSync(t)
+	b := newReplica(t, remote, t.TempDir())
+	if got, _ := b.store.Get(m.ID); got.Folder != work.ID || len(b.store.Folders()) != 1 {
+		t.Fatalf("B: folders=%v doc folder=%q", b.store.Folders(), got.Folder)
+	}
+
+	_, _ = a.store.CreateFolder("From A", "")
+	name := "Work (renamed on B)"
+	_, _ = b.store.UpdateFolder(work.ID, boards.FolderPatch{Name: &name})
+	_, _ = b.store.CreateFolder("From B", "")
+	a.flushAndSync(t)
+	b.flushAndSync(t) // rejected, merged, pushed
+	a.backend.SyncOnce(context.Background())
+
+	for label, r := range map[string]*replica{"A": a, "B": b} {
+		got := map[string]bool{}
+		for _, f := range r.store.Folders() {
+			got[f.Name] = true
+		}
+		if len(got) != 3 || !got["From A"] || !got["From B"] || !got[name] {
+			t.Fatalf("%s folders = %v", label, got)
+		}
+	}
 }

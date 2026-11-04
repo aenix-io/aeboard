@@ -102,11 +102,11 @@ func open(t *testing.T, b Backend) *Store {
 func TestCreateStartsFromSeedAndSurvivesRestartThroughTheDirBackend(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, DirBackend{Root: dir})
-	m, err := s.Create(CreateInput{Title: "  Roadmap ", Tags: []string{"q4", " Team ", "q4", ""}}, "kvaps")
+	m, err := s.Create(CreateInput{Title: "  Roadmap "}, "kvaps")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Title != "Roadmap" || !slices.Equal(m.Tags, []string{"q4", "Team"}) || !ValidID(m.ID) {
+	if m.Title != "Roadmap" || !ValidID(m.ID) {
 		t.Fatalf("meta = %+v", m)
 	}
 	st, _ := s.LoadState(m.ID)
@@ -123,7 +123,7 @@ func TestCreateStartsFromSeedAndSurvivesRestartThroughTheDirBackend(t *testing.T
 	}
 	re := open(t, DirBackend{Root: dir})
 	got, err := re.Get(m.ID)
-	if err != nil || got.Title != "Roadmap" || !slices.Equal(got.Tags, m.Tags) {
+	if err != nil || got.Title != "Roadmap" {
 		t.Fatalf("reopened meta = %+v, %v", got, err)
 	}
 	st, _ = re.LoadState(m.ID)
@@ -137,7 +137,7 @@ func TestCreateStartsFromSeedAndSurvivesRestartThroughTheDirBackend(t *testing.T
 func TestEmptyTitleStaysEmptyAndModeDefaultsToBoard(t *testing.T) {
 	s := open(t, &countingBackend{})
 	m, _ := s.Create(CreateInput{Title: "   "}, "")
-	if m.Title != "" || m.Tags == nil || m.Mode != ModeEdgeless {
+	if m.Title != "" || m.Folder != "" || m.Mode != ModeEdgeless {
 		t.Fatalf("meta = %+v", m)
 	}
 	st, _ := s.LoadState(m.ID)
@@ -224,7 +224,7 @@ func TestLegacyCatalogTitleMovesIntoTheDocument(t *testing.T) {
 func TestManyEditsCoalesceIntoOneWrite(t *testing.T) {
 	be := &countingBackend{}
 	s := open(t, be)
-	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "alice")
+	m, _ := s.Create(CreateInput{Title: "b"}, "alice")
 	for i := range 100 {
 		st, _ := s.LoadState(m.ID)
 		who := []string{"alice", "bob"}[i%2]
@@ -257,7 +257,7 @@ func TestManyEditsCoalesceIntoOneWrite(t *testing.T) {
 func TestRepeatedUpdateIsNotAChange(t *testing.T) {
 	be := &countingBackend{}
 	s := open(t, be)
-	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
+	m, _ := s.Create(CreateInput{Title: "b"}, "")
 	_ = s.Flush(context.Background())
 	st, _ := s.LoadState(m.ID)
 	upd := editOf(t, st, 7, "shape-1", "rect")
@@ -277,7 +277,7 @@ func TestRepeatedUpdateIsNotAChange(t *testing.T) {
 func TestEditDuringFlushStaysDirty(t *testing.T) {
 	be := &countingBackend{}
 	s := open(t, be)
-	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
+	m, _ := s.Create(CreateInput{Title: "b"}, "")
 	be.during = func() {
 		be.during = nil
 		st, _ := s.LoadState(m.ID)
@@ -297,7 +297,7 @@ func TestEditDuringFlushStaysDirty(t *testing.T) {
 
 func TestConcurrentEditsFromDivergedReplicasMerge(t *testing.T) {
 	s := open(t, &countingBackend{})
-	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
+	m, _ := s.Create(CreateInput{Title: "b"}, "")
 	base, _ := s.LoadState(m.ID)
 	a := editOf(t, base, 11, "from-a", "x")
 	b := editOf(t, base, 12, "from-b", "y")
@@ -316,7 +316,7 @@ func TestMergeRemote(t *testing.T) {
 	clock := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	s := open(t, &countingBackend{})
 	s.now = func() time.Time { return clock }
-	m, _ := s.Create(CreateInput{Title: "local title", Tags: []string{"a"}}, "")
+	m, _ := s.Create(CreateInput{Title: "local title"}, "")
 	_ = s.Flush(context.Background())
 	base, _ := s.LoadState(m.ID)
 
@@ -365,7 +365,7 @@ func TestOlderRemoteMetadataDoesNotWin(t *testing.T) {
 	clock := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	s := open(t, &countingBackend{})
 	s.now = func() time.Time { return clock }
-	m, _ := s.Create(CreateInput{Title: "mine", Tags: nil}, "")
+	m, _ := s.Create(CreateInput{Title: "mine"}, "")
 	old := m
 	old.Title = "stale"
 	old.Updated = clock.Add(-time.Hour)
@@ -383,7 +383,7 @@ func TestFlusherPolicy(t *testing.T) {
 	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
 	advance := func(d time.Duration) { mu.Lock(); clock = clock.Add(d); mu.Unlock() }
 
-	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
+	m, _ := s.Create(CreateInput{Title: "b"}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -433,24 +433,19 @@ func TestFlusherPolicy(t *testing.T) {
 	}
 }
 
-func TestListNewestFirstAndTagsUnion(t *testing.T) {
+func TestListNewestFirst(t *testing.T) {
 	s := open(t, &countingBackend{})
 	clock := time.Date(2026, 11, 3, 10, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { clock = clock.Add(time.Minute); return clock }
-	old, _ := s.Create(CreateInput{Title: "old", Tags: []string{"ops"}}, "")
-	_, _ = s.Create(CreateInput{Title: "new", Tags: []string{"design", "Ops"}}, "")
-	list := s.List()
-	if len(list) != 2 || list[0].Title != "new" {
+	old, _ := s.Create(CreateInput{Title: "old"}, "")
+	_, _ = s.Create(CreateInput{Title: "new"}, "")
+	if list := s.List(); len(list) != 2 || list[0].Title != "new" {
 		t.Fatalf("list = %+v", list)
 	}
-	tags := []string{"ops", "retro"}
-	_, _, _ = s.Update(old.ID, Patch{Tags: &tags}, "")
+	root := ""
+	_, _, _ = s.Update(old.ID, Patch{Folder: &root}, "")
 	if s.List()[0].ID != old.ID {
-		t.Fatalf("updated board not first")
-	}
-	// "ops" and "Ops" are one tag, spelled as on the board created first.
-	if got := s.Tags(); !slices.Equal(got, []string{"design", "ops", "retro"}) {
-		t.Fatalf("tags = %v", got)
+		t.Fatalf("updated document not first")
 	}
 }
 
@@ -469,7 +464,7 @@ func TestUnknownBoard(t *testing.T) {
 
 func TestDocJSONIsReadable(t *testing.T) {
 	s := open(t, &countingBackend{})
-	m, _ := s.Create(CreateInput{Title: "b", Tags: nil}, "")
+	m, _ := s.Create(CreateInput{Title: "b"}, "")
 	st, _ := s.LoadState(m.ID)
 	out, err := DocJSON(st)
 	if err != nil {
@@ -493,7 +488,7 @@ func TestValidID(t *testing.T) {
 func TestLegacyBinaryStateIsReadThenReplacedByText(t *testing.T) {
 	dir := t.TempDir()
 	s := open(t, DirBackend{Root: dir})
-	m, _ := s.Create(CreateInput{Title: "old", Tags: nil}, "")
+	m, _ := s.Create(CreateInput{Title: "old"}, "")
 	st, _ := s.LoadState(m.ID)
 	st, _ = MergeStates(st, editOf(t, st, 9, "kept", "v"))
 	board := filepath.Join(dir, BoardPath(m.ID))

@@ -1,9 +1,9 @@
-// Package boards is the board catalogue: each board's metadata (title, tags)
+// Package boards is the document catalogue: each document's metadata (title, folder)
 // and its Yjs state, held in memory and written behind to a Backend.
 //
 // Every board is a directory in the backend:
 //
-//	boards/<id>/board.json   metadata (title, tags, timestamps)
+//	boards/<id>/board.json   metadata (mode, title, folder, timestamps)
 //	boards/<id>/state.jsonl  the Yjs state as text (package ytext) — the source of truth
 //	boards/<id>/doc.json     the same document as JSON, for reading and diffs
 //
@@ -40,8 +40,9 @@ type Meta struct {
 	Mode string `json:"mode"`
 	// Title mirrors the title written in the document itself (its root
 	// block's title); the store keeps the two in step.
-	Title   string    `json:"title"`
-	Tags    []string  `json:"tags"`
+	Title string `json:"title"`
+	// Folder is the folder the document is in; "" is the top level.
+	Folder  string    `json:"folder"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 }
@@ -62,10 +63,10 @@ var ErrInvalid = errors.New("invalid document")
 type CreateInput struct {
 	// ID is chosen by the client when it needs the id before the round trip
 	// (a page created from the editor's link menu); empty mints one.
-	ID    string
-	Mode  string
-	Title string
-	Tags  []string
+	ID     string
+	Mode   string
+	Title  string
+	Folder string
 	// Blank starts the document with no blocks at all instead of the seed:
 	// the editor's "new doc" path (BlockSuite's createDefaultDoc) builds the
 	// root blocks itself in the creating browser, and a seed under them
@@ -79,8 +80,9 @@ var emptyUpdate = []byte{0, 0}
 
 // Patch changes a board's metadata; nil fields are left as they are.
 type Patch struct {
-	Title *string   `json:"title,omitempty"`
-	Tags  *[]string `json:"tags,omitempty"`
+	Title *string `json:"title,omitempty"`
+	// Folder moves the document ("" is the top level).
+	Folder *string `json:"folder,omitempty"`
 }
 
 // Snapshot is one board as a backend stores it.
@@ -107,6 +109,11 @@ type Store struct {
 
 	mu     sync.Mutex
 	boards map[string]*board
+	// folders is the folder tree (tombstones included); foldersDirty is set
+	// while it has changes the backend has not got (see folders.go).
+	folders      map[string]Folder
+	foldersDirty bool
+	foldersGen   uint64
 	// flushMu serialises flushes so two never write the same board at once.
 	flushMu sync.Mutex
 	// changed is signalled (non-blocking) on every new dirty mark.
@@ -140,6 +147,7 @@ func Open(ctx context.Context, backend Backend) (*Store, error) {
 		backend:   backend,
 		now:       time.Now,
 		boards:    map[string]*board{},
+		folders:   map[string]Folder{},
 		changed:   make(chan struct{}, 1),
 		listeners: map[int]func(){},
 	}
@@ -158,11 +166,19 @@ func Open(ctx context.Context, backend Backend) (*Store, error) {
 		}
 		s.boards[b.meta.ID] = b
 	}
+	if fb, ok := backend.(FolderBackend); ok {
+		fs, err := fb.LoadFolders(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, f := range fs {
+			s.folders[f.ID] = f
+		}
+	}
 	return s, nil
 }
 
 func normMeta(m *Meta) {
-	m.Tags = normTags(m.Tags)
 	if m.Mode != ModePage {
 		m.Mode = ModeEdgeless
 	}
@@ -232,6 +248,10 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 	}
 
 	s.mu.Lock()
+	if !s.liveFolderLocked(in.Folder) {
+		s.mu.Unlock()
+		return Meta{}, fmt.Errorf("%w: no folder %q", ErrInvalid, in.Folder)
+	}
 	id := in.ID
 	if id == "" {
 		id = newID()
@@ -244,7 +264,7 @@ func (s *Store) Create(in CreateInput, actor string) (Meta, error) {
 	}
 	now := s.now().UTC()
 	b := &board{
-		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Tags: normTags(in.Tags), Created: now, Updated: now},
+		meta:  Meta{ID: id, Mode: in.Mode, Title: title, Folder: in.Folder, Created: now, Updated: now},
 		state: state,
 	}
 	s.boards[id] = b
@@ -290,8 +310,12 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 		}
 		m.Title = title
 	}
-	if p.Tags != nil {
-		m.Tags = normTags(*p.Tags)
+	if p.Folder != nil {
+		if !s.liveFolderLocked(*p.Folder) {
+			s.mu.Unlock()
+			return Meta{}, nil, fmt.Errorf("%w: no folder %q", ErrInvalid, *p.Folder)
+		}
+		m.Folder = *p.Folder
 	}
 	m.Updated = s.now().UTC()
 	b.meta = m
@@ -300,24 +324,6 @@ func (s *Store) Update(id string, p Patch, actor string) (Meta, []byte, error) {
 	s.mu.Unlock()
 	s.notify()
 	return out, upd, nil
-}
-
-// Tags returns every tag in use, sorted. Tags are case-insensitive: "Ops"
-// on one board and "ops" on another are one tag, listed in the spelling of
-// the board created first.
-func (s *Store) Tags() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	all := make([]*board, 0, len(s.boards))
-	for _, b := range s.boards {
-		all = append(all, b)
-	}
-	slices.SortFunc(all, func(a, b *board) int { return a.meta.Created.Compare(b.meta.Created) })
-	var tags []string
-	for _, b := range all {
-		tags = append(tags, b.meta.Tags...)
-	}
-	return normTags(tags)
 }
 
 // LoadState returns a board's Yjs state (the seed for a board that never
@@ -498,6 +504,9 @@ func (s *Store) Pending() int {
 			n++
 		}
 	}
+	if s.foldersDirty {
+		n++
+	}
 	return n
 }
 
@@ -564,6 +573,14 @@ func (s *Store) flush(ctx context.Context, due func(string, *board) bool, ids ..
 		}
 	}
 	s.mu.Unlock()
+	// The folder tree goes with every full flush (a flush of named boards —
+	// a room closing — leaves it to the next tick).
+	if len(ids) == 0 {
+		if err := s.flushFolders(ctx); err != nil {
+			return err
+		}
+		defer s.notify()
+	}
 	if len(snaps) == 0 {
 		return nil
 	}
@@ -649,28 +666,7 @@ func MergeStates(state, update []byte) ([]byte, error) {
 	return after, nil
 }
 
-// normTags trims, drops empties and duplicates, and sorts. Tags compare
-// case-insensitively but keep the case they were first written with.
-func normTags(tags []string) []string {
-	out := []string{}
-	seen := map[string]bool{}
-	for _, t := range tags {
-		t = strings.TrimSpace(t)
-		k := strings.ToLower(t)
-		if t == "" || seen[k] {
-			continue
-		}
-		seen[k] = true
-		out = append(out, t)
-	}
-	slices.SortFunc(out, func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) })
-	return out
-}
-
-func cloneMeta(m Meta) Meta {
-	m.Tags = slices.Clone(m.Tags)
-	return m
-}
+func cloneMeta(m Meta) Meta { return m }
 
 const idAlphabet = "0123456789abcdefghjkmnpqrstvwxyz"
 

@@ -79,7 +79,7 @@ func Decode(id string, meta, state, legacy []byte) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("board %s: %s: %w", id, metaFile, err)
 	}
 	m.ID = id
-	m.Tags = normTags(m.Tags)
+	normMeta(&m)
 	sn := Snapshot{Meta: m, State: legacy}
 	if len(state) > 0 {
 		bin, err := ytext.Unmarshal(state)

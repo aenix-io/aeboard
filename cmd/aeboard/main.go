@@ -216,6 +216,10 @@ func startGitSync(gb *gitbackend.Backend, store *boards.Store, srv *server.Serve
 		return func() {}, ch
 	}
 	gb.OnStatus = srv.NotifyStatus
+	gb.OnRemoteFolders = func(folders []boards.Folder) {
+		store.MergeRemoteFolders(folders)
+		srv.NotifyStatus()
+	}
 	gb.OnRemote = func(ctx context.Context, remotes []boards.Remote) {
 		gained, err := store.MergeRemote(remotes)
 		if err != nil {

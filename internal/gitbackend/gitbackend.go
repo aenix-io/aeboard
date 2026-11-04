@@ -61,6 +61,8 @@ type Backend struct {
 	// merged into the branch; main wires it to the board store and the live
 	// rooms.
 	OnRemote func(ctx context.Context, remotes []boards.Remote)
+	// OnRemoteFolders receives the remote's folder tree when it changed.
+	OnRemoteFolders func(folders []boards.Folder)
 	// OnStatus is called whenever Status may have changed.
 	OnStatus func()
 }
@@ -273,40 +275,50 @@ func (b *Backend) fetchAndIntegrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("fetch: %w", err)
 	}
-	remotes, err := b.integrate(tip)
+	in, err := b.integrate(tip)
 	if err != nil {
 		return err
 	}
-	if len(remotes) > 0 && b.OnRemote != nil {
-		b.OnRemote(ctx, remotes)
+	if len(in.boards) > 0 && b.OnRemote != nil {
+		b.OnRemote(ctx, in.boards)
+	}
+	if in.folders != nil && b.OnRemoteFolders != nil {
+		b.OnRemoteFolders(in.folders)
 	}
 	b.ok()
 	return nil
 }
 
+// incoming is what the remote changed: its copy of every changed board, and
+// its folder tree when that changed (nil otherwise).
+type incoming struct {
+	boards  []boards.Remote
+	folders []boards.Folder
+}
+
 // integrate brings the remote tip into the branch — a fast-forward when we
-// have nothing of our own on top, a merge commit otherwise — and returns the
-// boards the remote changed (as the remote has them).
-func (b *Backend) integrate(tip plumbing.Hash) ([]boards.Remote, error) {
+// have nothing of our own on top, a merge commit otherwise — and returns
+// what the remote changed (as the remote has it).
+func (b *Backend) integrate(tip plumbing.Hash) (incoming, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	head := b.repo.Head()
 	if tip.IsZero() || tip == head {
-		return nil, nil
+		return incoming{}, nil
 	}
 	if ok, err := b.repo.IsAncestor(tip, head); err != nil {
-		return nil, err
+		return incoming{}, err
 	} else if ok {
-		return nil, nil // we already contain it
+		return incoming{}, nil // we already contain it
 	}
-	ids, err := b.changedBoards(head, tip)
+	ids, foldersChanged, err := b.changedBoards(head, tip)
 	if err != nil {
-		return nil, err
+		return incoming{}, err
 	}
 	ff := head.IsZero()
 	if !ff {
 		if ff, err = b.repo.IsAncestor(head, tip); err != nil {
-			return nil, err
+			return incoming{}, err
 		}
 	}
 	var remotes []boards.Remote
@@ -315,7 +327,7 @@ func (b *Backend) integrate(tip plumbing.Hash) ([]boards.Remote, error) {
 	for _, id := range ids {
 		theirs, inTheirs, err := b.read(tip, id)
 		if err != nil {
-			return nil, err
+			return incoming{}, err
 		}
 		if inTheirs {
 			remotes = append(remotes, boards.Remote{Meta: theirs.Meta, State: theirs.State})
@@ -325,49 +337,78 @@ func (b *Backend) integrate(tip plumbing.Hash) ([]boards.Remote, error) {
 		}
 		ours, inOurs, err := b.read(head, id)
 		if err != nil {
-			return nil, err
+			return incoming{}, err
 		}
 		if !inOurs {
 			continue // only theirs: their tree already has it
 		}
 		m, err := mergeBoard(ours, theirs, inTheirs)
 		if err != nil {
-			return nil, fmt.Errorf("merge board %s: %w", id, err)
+			return incoming{}, fmt.Errorf("merge board %s: %w", id, err)
 		}
 		files, err := boards.Encode(m)
 		if err != nil {
-			return nil, err
+			return incoming{}, err
 		}
 		writes = append(writes, writesOf(files)...)
 		merged = append(merged, id)
 	}
+	var theirFolders []boards.Folder
+	if foldersChanged {
+		if theirFolders, err = b.readFolders(tip); err != nil {
+			return incoming{}, err
+		}
+		if theirFolders == nil {
+			theirFolders = []boards.Folder{}
+		}
+		if !ff {
+			ours, err := b.readFolders(head)
+			if err != nil {
+				return incoming{}, err
+			}
+			mergedFolders, _ := boards.MergeFolders(ours, theirFolders)
+			data, err := boards.EncodeFolders(mergedFolders)
+			if err != nil {
+				return incoming{}, err
+			}
+			writes = append(writes, gitstore.FileWrite{Path: boards.FoldersFile, Data: data})
+			merged = append(merged, boards.FoldersFile)
+		}
+	}
+	in := incoming{boards: remotes, folders: theirFolders}
 	if ff {
 		if err := b.repo.ResetTo(tip); err != nil {
-			return nil, err
+			return incoming{}, err
 		}
 		b.opts.Log.Info("fast-forwarded to the remote", "boards", len(remotes))
-		return remotes, nil
+		return in, nil
 	}
 	a := gitstore.Action{
 		Summary:  "Merge boards from the remote",
 		Trailers: map[string]string{"Aeboard-Merged": strings.Join(merged, " ")},
 	}
 	if _, err := b.repo.Merge(tip, a, writes); err != nil {
-		return nil, fmt.Errorf("merge: %w", err)
+		return incoming{}, fmt.Errorf("merge: %w", err)
 	}
 	b.opts.Log.Info("merged the remote", "boards", merged)
-	return remotes, nil
+	return in, nil
 }
 
-// changedBoards lists the board ids whose files differ between two commits.
-func (b *Backend) changedBoards(from, to plumbing.Hash) ([]string, error) {
+// changedBoards lists the board ids whose files differ between two commits,
+// and whether the folder tree does.
+func (b *Backend) changedBoards(from, to plumbing.Hash) ([]string, bool, error) {
 	paths, err := b.repo.ChangedPaths(from, to)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	seen := map[string]bool{}
 	var ids []string
+	folders := false
 	for _, p := range paths {
+		if path.Clean(p) == boards.FoldersFile {
+			folders = true
+			continue
+		}
 		parts := strings.Split(path.Clean(p), "/")
 		if len(parts) < 3 || parts[0] != boards.Dir || !boards.ValidID(parts[1]) || seen[parts[1]] {
 			continue
@@ -376,7 +417,49 @@ func (b *Backend) changedBoards(from, to plumbing.Hash) ([]string, error) {
 		ids = append(ids, parts[1])
 	}
 	slices.Sort(ids)
-	return ids, nil
+	return ids, folders, nil
+}
+
+func (b *Backend) readFolders(at plumbing.Hash) ([]boards.Folder, error) {
+	if at.IsZero() {
+		return nil, nil
+	}
+	data, err := b.readOptional(at, boards.FoldersFile)
+	if err != nil {
+		return nil, err
+	}
+	return boards.DecodeFolders(data)
+}
+
+// LoadFolders reads the folder tree at the branch tip.
+func (b *Backend) LoadFolders(context.Context) ([]boards.Folder, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.readFolders(b.repo.Head())
+}
+
+// SaveFolders commits the folder tree.
+func (b *Backend) SaveFolders(_ context.Context, folders []boards.Folder) error {
+	data, err := boards.EncodeFolders(folders)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	h, err := b.repo.Commit(gitstore.Action{Summary: "Edit folders"}, []gitstore.FileWrite{{Path: boards.FoldersFile, Data: data}})
+	b.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("commit folders: %w", err)
+	}
+	if !h.IsZero() {
+		b.smu.Lock()
+		if b.unpushedSince.IsZero() {
+			b.unpushedSince = time.Now()
+		}
+		b.smu.Unlock()
+		b.status()
+		b.Kick()
+	}
+	return nil
 }
 
 // mergeBoard combines our and their copy of a board: states merge, the
